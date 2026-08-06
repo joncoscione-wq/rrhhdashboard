@@ -427,13 +427,20 @@ async function importVacaciones(
       }
 
       if (!yaRegistrado) {
-        await supabase.rpc('registrar_vacaciones', {
+        // registrar_vacaciones rechaza rangos que se solapan con otros ya
+        // cargados: eso no es un alta, es una fila que la planilla repite.
+        const { error } = await supabase.rpc('registrar_vacaciones', {
           p_empleado_id: empleadoId,
           p_fecha_inicio: range.inicio,
           p_fecha_fin: range.fin,
           p_periodo_anio: mc.year
         });
-        created++;
+        if (error) {
+          console.error('[import] registrar vacaciones:', error.message);
+          skipped++;
+        } else {
+          created++;
+        }
       } else {
         updated++;
       }
