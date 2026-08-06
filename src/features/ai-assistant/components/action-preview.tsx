@@ -30,6 +30,10 @@ type Props = {
 export function ActionPreview({ action, onApprove, onReject, onRevert, isExecuting }: Props) {
   const [showRecords, setShowRecords] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Una operación de negocio (cargar vacaciones) no escribe una tabla: llama a
+  // una función del dominio que además mueve saldos. Se muestra distinto para
+  // que el usuario entienda qué está aprobando.
+  const esOperacion = action.kind === 'operation' || action.type === 'operation';
 
   const handleEjecutar = () => {
     if (action.risk === 'high') {
@@ -100,7 +104,9 @@ export function ActionPreview({ action, onApprove, onReject, onRevert, isExecuti
       <div className='flex items-start justify-between gap-2'>
         <div className='flex items-center gap-2 flex-wrap'>
           <Icons.sparkles className='h-4 w-4 text-muted-foreground shrink-0' />
-          <span className='font-medium'>Acción propuesta</span>
+          <span className='font-medium'>
+            {esOperacion ? 'Operación propuesta' : 'Acción propuesta'}
+          </span>
           <Badge variant='outline' className={`text-[10px] ${RISK_BADGE[action.risk]}`}>
             {action.risk === 'high'
               ? '⚠️ riesgo alto'
@@ -109,7 +115,7 @@ export function ActionPreview({ action, onApprove, onReject, onRevert, isExecuti
                 : 'riesgo bajo'}
           </Badge>
           <Badge variant='outline' className='text-[10px]'>
-            {action.type} → {action.table}
+            {esOperacion ? `⚙ ${action.operation}` : `${action.type} → ${action.table}`}
           </Badge>
         </div>
       </div>
@@ -123,25 +129,38 @@ export function ActionPreview({ action, onApprove, onReject, onRevert, isExecuti
         </p>
       )}
 
-      {action.records.length > 0 && (
-        <button
-          onClick={() => setShowRecords(!showRecords)}
-          className='text-xs text-primary hover:underline flex items-center gap-1'
-        >
-          {showRecords ? (
-            <Icons.chevronUp className='h-3 w-3' />
-          ) : (
-            <Icons.chevronDown className='h-3 w-3' />
+      {esOperacion ? (
+        <dl className='grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded bg-black/5 p-2 text-xs dark:bg-white/5'>
+          {Object.entries(action.operation_args ?? {}).map(([clave, valor]) => (
+            <div key={clave} className='contents'>
+              <dt className='text-muted-foreground'>{clave}</dt>
+              <dd className='font-mono'>{String(valor)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <>
+          {action.records.length > 0 && (
+            <button
+              onClick={() => setShowRecords(!showRecords)}
+              className='text-xs text-primary hover:underline flex items-center gap-1'
+            >
+              {showRecords ? (
+                <Icons.chevronUp className='h-3 w-3' />
+              ) : (
+                <Icons.chevronDown className='h-3 w-3' />
+              )}
+              {showRecords ? 'Ocultar' : 'Ver'} datos ({action.records.length} filas)
+            </button>
           )}
-          {showRecords ? 'Ocultar' : 'Ver'} datos ({action.records.length} filas)
-        </button>
-      )}
 
-      {showRecords && (
-        <pre className='overflow-x-auto rounded bg-black/5 p-2 text-xs dark:bg-white/5 max-h-48'>
-          {JSON.stringify(action.records.slice(0, 5), null, 2)}
-          {action.records.length > 5 && `\n... y ${action.records.length - 5} más`}
-        </pre>
+          {showRecords && (
+            <pre className='overflow-x-auto rounded bg-black/5 p-2 text-xs dark:bg-white/5 max-h-48'>
+              {JSON.stringify(action.records.slice(0, 5), null, 2)}
+              {action.records.length > 5 && `\n... y ${action.records.length - 5} más`}
+            </pre>
+          )}
+        </>
       )}
 
       <div className='flex gap-2 pt-1'>

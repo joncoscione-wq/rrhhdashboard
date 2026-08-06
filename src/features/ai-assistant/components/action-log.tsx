@@ -80,7 +80,7 @@ export function ActionLog({ entries }: Props) {
 
               <div className='flex items-center gap-1.5 flex-wrap'>
                 <Badge variant='outline' className='text-[10px] font-mono'>
-                  {action.type}
+                  {action.operation ? `⚙ ${action.operation}` : action.type}
                 </Badge>
                 <Badge variant='outline' className='text-[10px]'>
                   {action.table}

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAdminClient } from '@/features/ai-assistant/lib/admin-client';
+import { OPERATIONS, validarArgumentos } from '@/features/ai-assistant/lib/operations';
 import type { RevertRequest, RevertResponse } from '@/features/ai-assistant/api/types';
 
 export const dynamic = 'force-dynamic';
@@ -7,13 +8,15 @@ export const dynamic = 'force-dynamic';
 type LogRow = {
   id: number;
   session_id: string | null;
-  action_type: 'upsert' | 'update' | 'delete';
+  action_type: 'upsert' | 'update' | 'delete' | 'operation';
   table_name: string;
   description: string | null;
   records_before: Record<string, unknown>[] | null;
   records_after: Record<string, unknown>[] | null;
   status: string;
   reverted_at: string | null;
+  operation: string | null;
+  operation_args: Record<string, unknown> | null;
 };
 
 /**
@@ -53,6 +56,52 @@ export async function POST(request: Request) {
       { error: 'Solo se pueden revertir acciones ejecutadas' },
       { status: 400 }
     );
+  }
+
+  // ── Operación de negocio: se deshace con su operación inversa ──────────────
+  // No sirve restaurar filas: registrar_vacaciones toca `vacaciones` y
+  // `vacaciones_dias` y mueve el saldo, así que lo correcto es llamar a
+  // revertir_vacaciones con los mismos argumentos.
+  if (log.action_type === 'operation') {
+    const def = log.operation ? OPERATIONS[log.operation] : undefined;
+    if (!def?.inversa) {
+      return NextResponse.json(
+        { error: `La operación "${log.operation}" no se puede deshacer automáticamente` },
+        { status: 400 }
+      );
+    }
+    const inversa = OPERATIONS[def.inversa];
+    const validacion = validarArgumentos(inversa, log.operation_args ?? {});
+    if ('error' in validacion) {
+      return NextResponse.json({ error: validacion.error }, { status: 400 });
+    }
+
+    const { error } = await db.rpc(inversa.rpc, validacion.rpcArgs);
+    if (error) {
+      return NextResponse.json({ error: `No se pudo deshacer: ${error.message}` }, { status: 500 });
+    }
+
+    await db.from('ai_agent_log' as never).insert({
+      session_id: log.session_id,
+      action_type: 'operation',
+      table_name: log.table_name,
+      description: `Reversión de la acción #${log.id}: ${log.description ?? 'sin descripción'}`,
+      risk: 'low',
+      records_before: log.records_after ?? [],
+      records_after: [],
+      affected: 1,
+      status: 'executed',
+      operation: inversa.name,
+      operation_args: log.operation_args ?? {},
+      revert_of: log.id
+    } as never);
+
+    await db
+      .from('ai_agent_log' as never)
+      .update({ reverted_at: new Date().toISOString() } as never)
+      .eq('id', log.id);
+
+    return NextResponse.json<RevertResponse>({ restored: 1, removed: 0 });
   }
 
   const before = log.records_before ?? [];

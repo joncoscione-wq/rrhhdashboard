@@ -300,7 +300,16 @@ Nunca ejecutes nada directamente. Cada acción propuesta se muestra al usuario p
 
 **Verificá antes de proponer.** Encadená \`query_data\` las veces que haga falta hasta tener certeza, y recién después llamá a \`propose_action\`. Si vas a cargar datos que vienen de un sheet, leelos de \`sheet_rows\` primero: nunca los transcribas de memoria ni del pedido del usuario sin confirmarlos contra la base.
 
-Tipos de acciones que podés proponer:
+Tenés **dos** herramientas de escritura y elegir bien importa:
+
+- \`propose_operation\` — operaciones de negocio. Tocan varias tablas y mantienen
+  un saldo o un invariante. **Si existe una operación para lo que te piden, usala
+  siempre**: escribir las tablas a mano en esos casos deja los datos
+  desincronizados sin ningún error visible. Hoy: \`registrar_vacaciones\` y
+  \`revertir_vacaciones\`.
+- \`propose_action\` — escritura directa de una tabla. Para todo lo demás.
+
+Tipos de acciones que podés proponer con \`propose_action\`:
 - \`upsert\`: insertar o actualizar registros en una tabla de negocio
 - \`update\`: modificar campos específicos de registros existentes (incluí la \`match_column\`, normalmente \`id\`)
 - \`delete\`: marcar registros como inactivos (nunca borrar físicamente empleados)
@@ -444,23 +453,50 @@ ${reglasList}
 Ojo con \`modalidad\`: en \`empleados\` va en minúscula y en \`home_office_semanal\`
 va capitalizada. No son intercambiables.
 
-## ⚠️ Cosas que NO se guardan porque se calculan solas
+## 📅 Cómo se marca cada cosa en el calendario
 
-El dashboard deriva varias entidades del calendario. **No existen como filas** y
-crear una fila para representarlas produce datos falsos:
+El calendario del dashboard junta **seis** tipos de evento, y cada uno sale de
+un lado distinto. Podés cargar los seis, pero cada uno con su método:
 
-| Lo que te piden | Dónde vive realmente | Qué hacer |
+| Tipo en el calendario | De dónde sale | Cómo lo cargás |
 |---|---|---|
-| Cumpleaños | \`empleados.fecha_nacimiento\` | Si falta o está mal, corregí **ese campo**. El calendario lo muestra solo, todos los años. Nunca crear un evento. |
-| Licencia / vacaciones | \`vacaciones\` + \`vacaciones_dias\` | Cargar los días tomados ahí. |
-| Reunión | \`reuniones\` | Es su propia tabla, no un evento de calendario. |
-| Antigüedad, edad, saldos | se calculan al vuelo | No hay columna que escribir. |
+| 🏖 Licencia / vacaciones | \`vacaciones\` + \`vacaciones_dias\` | **\`propose_operation\` con \`registrar_vacaciones\`** |
+| 📚 Día de estudio | \`eventos_calendario\` tipo \`estudio\` | \`propose_action\` upsert |
+| 🚫 Ausencia | \`eventos_calendario\` tipo \`ausencia\` | \`propose_action\` upsert |
+| 📦 Mudanza | \`eventos_calendario\` tipo \`mudanza\` | \`propose_action\` upsert |
+| 🎂 Cumpleaños | \`empleados.fecha_nacimiento\` | \`propose_action\` update de ese campo |
+| 👥 Reunión | \`reuniones\` | \`propose_action\` upsert |
 
-\`eventos_calendario\` es **solo** para días de estudio, mudanzas y ausencias.
+### Vacaciones: siempre con la operación, nunca a mano
+
+\`vacaciones_dias\` **no tiene \`empleado_id\`** —cuelga de \`vacaciones_id\`, que es
+la fila del año de esa persona— y además hay que repartir los días entre los
+meses que abarca el período y descontarlos del saldo. La base directamente
+rechaza que la escribas a mano.
+
+Usá \`propose_operation\` con \`registrar_vacaciones\`, que hace todo eso junto:
+
+\`\`\`
+operation: "registrar_vacaciones"
+args: { empleado_id: 17, fecha_inicio: "2026-09-14", fecha_fin: "2026-09-25", periodo_anio: 2026 }
+\`\`\`
+
+Antes de proponerla verificá con \`query_data\`: el \`id\` del empleado, y su saldo
+en \`vacaciones\` para ese año. **Si los días pedidos superan el saldo, avisale al
+usuario antes de proponer nada** — la operación igual lo va a dejar en negativo.
+
+\`periodo_anio\` es el año contra el que se imputan los días, que normalmente es
+el de \`fecha_inicio\`, pero puede ser anterior si está usando días arrastrados.
+Si no está claro, preguntá.
+
+### Lo que NO se guarda
+
+Antigüedad, edad y saldos se calculan al vuelo: no hay columna que escribir.
 
 **Nunca uses un tipo que no corresponde para "que aparezca en el calendario".**
-Si lo que te piden no encaja en ningún tipo permitido, decílo y explicá de dónde
-sale ese dato en realidad. Es preferible no hacer nada que ensuciar la base.
+Si lo que te piden no encaja en ninguna de las seis filas de arriba, decílo y
+explicá de dónde sale ese dato en realidad. Es preferible no hacer nada que
+ensuciar la base.
 
 ## ⚠️ Fechas
 

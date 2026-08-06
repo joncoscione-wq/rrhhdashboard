@@ -2,8 +2,14 @@ export type AssistantMode = 'chat' | 'build';
 
 export type MessageRole = 'user' | 'assistant' | 'system';
 
+export type ActionStatus = 'pending' | 'approved' | 'rejected' | 'executed' | 'error' | 'reverted';
+
+export type ActionResult = { affected: number; error?: string; log_id?: number };
+
 export type ProposedAction = {
-  type: 'upsert' | 'update' | 'delete' | 'mapping';
+  /** Distingue la escritura cruda de tabla de la operación de negocio */
+  kind?: 'write' | 'operation';
+  type: 'upsert' | 'update' | 'delete' | 'mapping' | 'operation';
   table: string;
   description: string;
   risk: 'low' | 'medium' | 'high';
@@ -11,8 +17,11 @@ export type ProposedAction = {
   conflict_column?: string;
   match_column?: string;
   affected_rows_estimate?: number;
-  status: 'pending' | 'approved' | 'rejected' | 'executed' | 'error' | 'reverted';
-  result?: { affected: number; error?: string; log_id?: number };
+  /** Solo cuando kind === 'operation' */
+  operation?: string;
+  operation_args?: Record<string, unknown>;
+  status: ActionStatus;
+  result?: ActionResult;
 };
 
 /** Lectura que hizo el agente durante el turno, para mostrar en qué se basó. */

@@ -5,6 +5,7 @@ import {
   runQueryData,
   type QueryDataArgs
 } from '@/features/ai-assistant/lib/read-tools';
+import { PROPOSE_OPERATION_TOOL, OPERATIONS } from '@/features/ai-assistant/lib/operations';
 import type { ChatRequest, ProposedAction } from '@/features/ai-assistant/api/types';
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
@@ -181,7 +182,10 @@ export async function POST(request: Request) {
 
   // En ambos modos el agente puede LEER. Lo que cambia es si puede proponer
   // escrituras: eso sigue siendo exclusivo de build, y siempre con confirmación.
-  const tools = mode === 'build' ? [QUERY_DATA_TOOL, PROPOSE_ACTION_TOOL] : [QUERY_DATA_TOOL];
+  const tools =
+    mode === 'build'
+      ? [QUERY_DATA_TOOL, PROPOSE_ACTION_TOOL, PROPOSE_OPERATION_TOOL]
+      : [QUERY_DATA_TOOL];
 
   const encoder = new TextEncoder();
 
@@ -214,11 +218,44 @@ export async function POST(request: Request) {
             }))
           });
 
+          const operacion = toolCalls.find((tc) => tc.name === 'propose_operation');
+          if (operacion) {
+            try {
+              const { operation, description, args } = JSON.parse(operacion.arguments) as {
+                operation: string;
+                description: string;
+                args: Record<string, unknown>;
+              };
+              const def = OPERATIONS[operation];
+              if (!def) throw new Error(`operación desconocida: ${operation}`);
+              emit({
+                t: 'action',
+                action: {
+                  kind: 'operation',
+                  type: 'operation',
+                  operation,
+                  operation_args: args ?? {},
+                  table: def.entidad,
+                  description,
+                  risk: def.risk,
+                  records: [args ?? {}],
+                  status: 'pending'
+                } satisfies ProposedAction
+              });
+            } catch (err) {
+              emit({
+                t: 'error',
+                message: `El asistente propuso una operación inválida: ${(err as Error).message}`
+              });
+            }
+            break;
+          }
+
           const propuesta = toolCalls.find((tc) => tc.name === 'propose_action');
           if (propuesta) {
             try {
               const action = JSON.parse(propuesta.arguments) as ProposedAction;
-              emit({ t: 'action', action: { ...action, status: 'pending' } });
+              emit({ t: 'action', action: { ...action, kind: 'write', status: 'pending' } });
             } catch {
               emit({ t: 'error', message: 'El asistente propuso una acción con formato inválido' });
             }
