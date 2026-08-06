@@ -1,5 +1,12 @@
 import { supabase } from '@/lib/supabase';
-import type { Documento, DocumentoUploadInput, TipoArchivo } from './types';
+import type {
+  Documento,
+  DocumentoUploadInput,
+  TipoArchivo,
+  EmpleadoOption,
+  LineaMovilOption,
+  LaptopOption
+} from './types';
 
 const BUCKET = 'expedientes';
 
@@ -13,7 +20,9 @@ function detectTipo(file: File): TipoArchivo {
 export async function getDocumentos(empleadoId?: number): Promise<Documento[]> {
   let query = supabase
     .from('documentos_empleados')
-    .select('*, empleados(nombre_apellido)')
+    .select(
+      '*, empleados(nombre_apellido), lineas_moviles(numero), flota_laptops!documentos_empleados_laptop_id_fkey(marca, modelo)'
+    )
     .not('storage_path', 'is', null)
     .order('created_at', { ascending: false });
 
@@ -24,17 +33,32 @@ export async function getDocumentos(empleadoId?: number): Promise<Documento[]> {
 
   return (data ?? []).map((d) => ({
     ...d,
-    empleado_nombre: d.empleados?.nombre_apellido ?? null
+    empleado_nombre: d.empleados?.nombre_apellido ?? null,
+    linea_movil_numero: d.lineas_moviles?.numero ?? null,
+    laptop_descripcion:
+      d.flota_laptops?.marca && d.flota_laptops?.modelo
+        ? `${d.flota_laptops.marca} ${d.flota_laptops.modelo}`
+        : null
   })) as Documento[];
 }
 
 export async function uploadDocumento({
   file,
   empleado_id,
+  linea_movil_id,
+  laptop_id,
   tipo,
-  tipo_otro
+  tipo_otro,
+  etiqueta
 }: DocumentoUploadInput): Promise<Documento> {
-  const storagePath = `${empleado_id}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
+  const prefix = empleado_id
+    ? `empleado_${empleado_id}`
+    : linea_movil_id
+      ? `linea_${linea_movil_id}`
+      : laptop_id
+        ? `laptop_${laptop_id}`
+        : 'general';
+  const storagePath = `${prefix}/${Date.now()}_${file.name.replace(/\s+/g, '_')}`;
   const tipoArchivo = detectTipo(file);
 
   const { error: uploadError } = await supabase.storage
@@ -47,15 +71,20 @@ export async function uploadDocumento({
     .from('documentos_empleados')
     .insert({
       empresa_id: 1,
-      empleado_id,
+      empleado_id: empleado_id ?? null,
+      linea_movil_id: linea_movil_id ?? null,
+      laptop_id: laptop_id ?? null,
       tipo,
       tipo_otro: tipo === 'otro' ? (tipo_otro?.trim() ?? null) : null,
+      etiqueta: etiqueta ?? null,
       storage_path: storagePath,
       nombre_archivo: file.name,
       tipo_archivo: tipoArchivo,
       tamanio: file.size
     })
-    .select('*, empleados(nombre_apellido)')
+    .select(
+      '*, empleados(nombre_apellido), lineas_moviles(numero), flota_laptops!documentos_empleados_laptop_id_fkey(marca, modelo)'
+    )
     .single();
 
   if (dbError) {
@@ -65,7 +94,12 @@ export async function uploadDocumento({
 
   return {
     ...data,
-    empleado_nombre: data.empleados?.nombre_apellido ?? null
+    empleado_nombre: data.empleados?.nombre_apellido ?? null,
+    linea_movil_numero: data.lineas_moviles?.numero ?? null,
+    laptop_descripcion:
+      data.flota_laptops?.marca && data.flota_laptops?.modelo
+        ? `${data.flota_laptops.marca} ${data.flota_laptops.modelo}`
+        : null
   } as Documento;
 }
 
@@ -86,8 +120,11 @@ export async function restoreDocumento(documento: Documento): Promise<void> {
   const { error } = await supabase.from('documentos_empleados').insert({
     empresa_id: documento.empresa_id,
     empleado_id: documento.empleado_id,
+    linea_movil_id: documento.linea_movil_id,
+    laptop_id: documento.laptop_id,
     tipo: documento.tipo,
     tipo_otro: documento.tipo_otro,
+    etiqueta: documento.etiqueta,
     storage_path: documento.storage_path,
     nombre_archivo: documento.nombre_archivo,
     tipo_archivo: documento.tipo_archivo,
@@ -106,8 +143,6 @@ export function getDownloadUrl(storagePath: string): string {
   return data.publicUrl;
 }
 
-export type EmpleadoOption = { id: number; nombre_apellido: string };
-
 export async function getEmpleadosParaDocumento(): Promise<EmpleadoOption[]> {
   const { data, error } = await supabase
     .from('empleados')
@@ -116,6 +151,29 @@ export async function getEmpleadosParaDocumento(): Promise<EmpleadoOption[]> {
     .order('nombre_apellido');
   if (error) throw new Error(error.message);
   return (data ?? []) as EmpleadoOption[];
+}
+
+export async function getLineasMovilesParaDocumento(): Promise<LineaMovilOption[]> {
+  const { data, error } = await supabase
+    .from('lineas_moviles')
+    .select('id, numero')
+    .order('numero');
+  if (error) throw new Error(error.message);
+  return (data ?? []) as LineaMovilOption[];
+}
+
+export async function getLaptopsParaDocumento(): Promise<LaptopOption[]> {
+  const { data, error } = await supabase
+    .from('flota_laptops')
+    .select('id, marca, modelo')
+    .order('marca');
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as { id: number; marca: string | null; modelo: string | null }[]).map(
+    (l) => ({
+      id: l.id,
+      descripcion: [l.marca, l.modelo].filter(Boolean).join(' ') || `Laptop #${l.id}`
+    })
+  );
 }
 
 export function formatTamanio(bytes: number | null): string {

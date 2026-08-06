@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Icons } from '@/components/icons';
-import type { Documento, TipoArchivo } from '@/features/documents/api/types';
+import type { Documento, TipoArchivo, EtiquetaDocumento } from '@/features/documents/api/types';
 import {
   softDeleteDocumento,
   restoreDocumento,
@@ -30,6 +30,14 @@ const tipoLabels: Record<string, string> = {
   dni: 'DNI / Identificación',
   certificado: 'Certificado',
   otro: 'Otro'
+};
+
+const etiquetaColors: Record<EtiquetaDocumento, string> = {
+  Legal: 'border-red-200 bg-red-50 text-red-700',
+  Contable: 'border-blue-200 bg-blue-50 text-blue-700',
+  RRHH: 'border-purple-200 bg-purple-50 text-purple-700',
+  Contrato: 'border-amber-200 bg-amber-50 text-amber-700',
+  Seguro: 'border-emerald-200 bg-emerald-50 text-emerald-700'
 };
 
 function ActionsCell({ documento }: { documento: Documento }) {
@@ -105,12 +113,42 @@ function ActionsCell({ documento }: { documento: Documento }) {
 
 export const columns: ColumnDef<Documento>[] = [
   {
-    id: 'empleado_nombre',
-    accessorKey: 'empleado_nombre',
-    header: ({ column }) => <DataTableColumnHeader column={column} title='Empleado' />,
-    cell: ({ row }) => (
-      <span className='text-sm font-medium'>{row.original.empleado_nombre ?? '—'}</span>
-    ),
+    id: 'asociado',
+    header: ({ column }) => <DataTableColumnHeader column={column} title='Asociado a' />,
+    cell: ({ row }) => {
+      const d = row.original;
+      if (d.linea_movil_numero) {
+        return (
+          <span className='text-sm'>
+            <Icons.mobile className='mr-1 inline h-3 w-3 text-muted-foreground' />
+            {d.linea_movil_numero}
+          </span>
+        );
+      }
+      if (d.laptop_descripcion) {
+        return (
+          <span className='text-sm'>
+            <Icons.laptop className='mr-1 inline h-3 w-3 text-muted-foreground' />
+            {d.laptop_descripcion}
+          </span>
+        );
+      }
+      return <span className='text-sm font-medium'>{d.empleado_nombre ?? '—'}</span>;
+    },
+    enableSorting: false
+  },
+  {
+    id: 'etiqueta',
+    header: ({ column }) => <DataTableColumnHeader column={column} title='Etiqueta' />,
+    cell: ({ row }) => {
+      const e = row.original.etiqueta;
+      if (!e) return <span className='text-xs text-muted-foreground'>—</span>;
+      return (
+        <Badge variant='outline' className={`text-xs ${etiquetaColors[e] ?? ''}`}>
+          {e}
+        </Badge>
+      );
+    },
     enableSorting: true
   },
   {

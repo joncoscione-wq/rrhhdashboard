@@ -21,6 +21,7 @@ import { Icons } from '@/components/icons';
 import { getSueldosByAnio, getAniosDisponibles } from '@/features/payroll/api/service';
 import type { Sueldo, SueldosPorEmpleado } from '@/features/payroll/api/types';
 import { SueldoDialog } from './sueldo-dialog';
+import { SheetsImportButton } from '@/features/sheets/components/sheets-import-button';
 
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
@@ -216,10 +217,13 @@ export function PayrollPage() {
             </SelectContent>
           </Select>
         </div>
-        <Button size='sm' onClick={() => setDialogOpen(true)}>
-          <Icons.circleCheck className='mr-2 h-4 w-4' />
-          Cargar / editar sueldo
-        </Button>
+        <div className='flex items-center gap-2'>
+          <SheetsImportButton />
+          <Button size='sm' onClick={() => setDialogOpen(true)}>
+            <Icons.circleCheck className='mr-2 h-4 w-4' />
+            Cargar / editar sueldo
+          </Button>
+        </div>
       </div>
 
       <SueldoDialog open={dialogOpen} onOpenChange={setDialogOpen} anio={anio} />

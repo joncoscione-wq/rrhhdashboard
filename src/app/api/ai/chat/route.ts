@@ -41,7 +41,7 @@ const PROPOSE_ACTION_TOOL = {
         table: {
           type: 'string',
           description:
-            'Tabla de negocio: empleados, sueldos, vacaciones, vacaciones_dias, lineas_moviles, flota_laptops, home_office_semanal, reuniones, manuales, puestos, eventos_calendario'
+            'Tabla de negocio: empleados, sueldos, vacaciones, lineas_moviles, flota_laptops, home_office_semanal, reuniones, puestos, eventos_calendario, documentos_empleados'
         },
         description: {
           type: 'string',

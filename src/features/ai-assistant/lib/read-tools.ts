@@ -24,10 +24,10 @@ const READABLE_TABLES = [
   'flota_laptops',
   'home_office_semanal',
   'reuniones',
-  'manuales',
   'notificaciones',
   'puestos',
   'eventos_calendario',
+  'documentos_empleados',
   // importación desde Google Sheets
   'google_sheets',
   'sheet_syncs',

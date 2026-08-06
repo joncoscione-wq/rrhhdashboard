@@ -27,7 +27,14 @@ export function DocumentosTable({ empleadoId }: DocumentosTableProps) {
     if (!search.trim()) return data;
     const q = search.toLowerCase();
     return data.filter((d: Documento) =>
-      [d.empleado_nombre, d.nombre_archivo, d.tipo_otro].some((v) => v?.toLowerCase().includes(q))
+      [
+        d.empleado_nombre,
+        d.linea_movil_numero,
+        d.laptop_descripcion,
+        d.nombre_archivo,
+        d.tipo_otro,
+        d.etiqueta
+      ].some((v) => v?.toLowerCase().includes(q))
     );
   }, [data, search]);
 

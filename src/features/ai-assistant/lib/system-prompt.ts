@@ -18,7 +18,6 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
     homeOfficeRes,
     reunionesRes,
     eventosRes,
-    manualesRes,
     notificacionesRes,
     reglasRes
   ] = await Promise.all([
@@ -63,7 +62,6 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
       .is('fecha_hasta', null),
     supabase.from('reuniones').select('*').order('fecha', { ascending: false }).limit(50),
     supabase.rpc('get_eventos_calendario'),
-    supabase.from('manuales').select('tarea, area, link_manual, nombre_archivo').order('area'),
     supabase
       .from('notificaciones')
       .select('entidad, accion, descripcion, created_at')
@@ -84,7 +82,6 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
   const homeOffice = homeOfficeRes.data ?? [];
   const reuniones = reunionesRes.data ?? [];
   const eventos = (eventosRes.data ?? []) as Record<string, unknown>[];
-  const manuales = manualesRes.data ?? [];
   const notificaciones = notificacionesRes.data ?? [];
   const reglas = (reglasRes.data ?? []) as {
     tabla: string;
@@ -223,16 +220,6 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
           .join('\n')
       : '  (sin eventos de calendario registrados)';
 
-  const manualesList =
-    manuales.length > 0
-      ? manuales
-          .map(
-            (m) =>
-              `  - [${m.area ?? 'sin área'}] ${m.tarea ?? 'N/D'}${m.link_manual ? ` | link: ${m.link_manual}` : ''}${m.nombre_archivo ? ` | archivo: ${m.nombre_archivo}` : ''}`
-          )
-          .join('\n')
-      : '  (sin manuales registrados)';
-
   // En modo build el agente tiene `query_data` y lee lo que necesita, así que
   // volcarle todo acá solo gasta contexto y le tapa las instrucciones. Se deja
   // la lista de empleados (necesita los ids para todo) y se reemplaza el resto
@@ -324,7 +311,7 @@ Si usás la clave natural en vez de \`id\`, el upsert actualiza la fila existent
 - \`puestos\` → \`empleado_id\`
 - \`lineas_moviles\` → \`numero\`
 - \`empleados\` → \`id\`, o \`empresa_id,dni\` / \`empresa_id,email\`
-- \`flota_laptops\`, \`manuales\`, \`reuniones\` → solo \`id\` (no tienen clave natural única; para altas nuevas no mandes \`id\` y se autogenera)
+- \`flota_laptops\`, \`reuniones\` → solo \`id\` (no tienen clave natural única; para altas nuevas no mandes \`id\` y se autogenera)
 
 Podés actuar sobre cualquier sección de un legajo: datos personales y de contacto (\`empleados\`), puesto (\`puestos\`), home office (\`home_office_semanal\`), sueldos y bonos (\`sueldos\`), vacaciones (\`vacaciones\`). Usá siempre el \`id\` numérico del empleado, verificado con \`query_data\`.
 
@@ -413,6 +400,7 @@ Tablas de negocio:
 - \`manuales\`: id, empresa_id, tarea, link_manual, area, storage_path, nombre_archivo
 - \`notificaciones\`: id, empresa_id, entidad, entidad_id, accion, descripcion, leida
 - \`puestos\`: id, empleado_id, puesto
+- \`documentos_empleados\`: id, empresa_id, empleado_id, linea_movil_id, laptop_id, tipo, tipo_otro, etiqueta ('Legal'|'Contable'|'RRHH'|'Contrato'|'Seguro'), storage_path, nombre_archivo, tipo_archivo, tamanio
 
 Tablas de integración Google Sheets:
 - \`google_sheets\`: id, name, url — planillas conectadas
@@ -450,9 +438,6 @@ ${bajoDemanda(reunionesList, 'reuniones')}
 
 ## Eventos de calendario (${eventos.length} registros: días de estudio, ausencias, mudanzas)
 ${bajoDemanda(eventosList, 'eventos_calendario')}
-
-## Manuales por área (${manuales.length} registros)
-${bajoDemanda(manualesList, 'manuales')}
 
 ## Actividad reciente en el dashboard (últimas ${notificaciones.length} notificaciones)
 ${bajoDemanda(actividadList, 'notificaciones')}

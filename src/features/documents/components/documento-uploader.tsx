@@ -7,8 +7,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Icons } from '@/components/icons';
 import { showUndoToast } from '@/lib/undo-toast';
-import { uploadDocumento, deleteDocumento, getEmpleadosParaDocumento } from '../api/service';
-import type { TipoDocumento } from '../api/types';
+import {
+  uploadDocumento,
+  deleteDocumento,
+  getEmpleadosParaDocumento,
+  getLineasMovilesParaDocumento,
+  getLaptopsParaDocumento
+} from '../api/service';
+import type { TipoDocumento, TipoEntidad, EtiquetaDocumento } from '../api/types';
 
 const ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png';
 const ACCEPT_MIME = [
@@ -26,24 +32,53 @@ const TIPOS: { value: TipoDocumento; label: string }[] = [
   { value: 'otro', label: 'Otro' }
 ];
 
+const ETIQUETAS: { value: EtiquetaDocumento | ''; label: string }[] = [
+  { value: '', label: 'Sin etiqueta' },
+  { value: 'Legal', label: 'Legal' },
+  { value: 'Contable', label: 'Contable' },
+  { value: 'RRHH', label: 'RRHH' },
+  { value: 'Contrato', label: 'Contrato' },
+  { value: 'Seguro', label: 'Seguro' }
+];
+
 interface DocumentoUploaderProps {
   empleadoIdFijo?: number;
+  /** Si se provee, se fuerza a asociar solo a esa entidad */
+  entidadFija?: { tipo: TipoEntidad; id: number };
 }
 
-export function DocumentoUploader({ empleadoIdFijo }: DocumentoUploaderProps) {
+export function DocumentoUploader({ empleadoIdFijo, entidadFija }: DocumentoUploaderProps) {
   const queryClient = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [entidadTipo, setEntidadTipo] = useState<TipoEntidad>(entidadFija?.tipo ?? 'empleado');
   const [empleadoId, setEmpleadoId] = useState<number>(empleadoIdFijo ?? 0);
+  const [lineaMovilId, setLineaMovilId] = useState<number>(0);
+  const [laptopId, setLaptopId] = useState<number>(0);
   const [tipo, setTipo] = useState<TipoDocumento>('contrato');
   const [tipoOtro, setTipoOtro] = useState('');
+  const [etiqueta, setEtiqueta] = useState<EtiquetaDocumento | ''>('');
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const noFixed = !empleadoIdFijo && !entidadFija;
 
   const { data: empleados = [] } = useQuery({
     queryKey: ['documentos', 'empleados'],
     queryFn: getEmpleadosParaDocumento,
-    enabled: !empleadoIdFijo
+    enabled: noFixed && entidadTipo === 'empleado'
+  });
+
+  const { data: lineasMoviles = [] } = useQuery({
+    queryKey: ['documentos', 'lineas_moviles'],
+    queryFn: getLineasMovilesParaDocumento,
+    enabled: noFixed && entidadTipo === 'linea_movil'
+  });
+
+  const { data: laptops = [] } = useQuery({
+    queryKey: ['documentos', 'laptops'],
+    queryFn: getLaptopsParaDocumento,
+    enabled: noFixed && entidadTipo === 'laptop'
   });
 
   const handleFile = (f: File) => {
@@ -69,14 +104,36 @@ export function DocumentoUploader({ empleadoIdFijo }: DocumentoUploaderProps) {
   const reset = () => {
     setFile(null);
     setTipoOtro('');
-    if (!empleadoIdFijo) setEmpleadoId(0);
+    if (noFixed) {
+      setEmpleadoId(0);
+      setLineaMovilId(0);
+      setLaptopId(0);
+      setEntidadTipo('empleado');
+    }
+    setEtiqueta('');
     if (inputRef.current) inputRef.current.value = '';
   };
 
   const submit = async () => {
     if (!file) return;
-    if (!empleadoId) {
-      toast.error('Seleccioná un empleado.');
+
+    const entidadId =
+      entidadTipo === 'empleado'
+        ? empleadoId
+        : entidadTipo === 'linea_movil'
+          ? lineaMovilId
+          : laptopId;
+
+    if (!entidadId) {
+      toast.error(
+        `Seleccioná ${
+          entidadTipo === 'empleado'
+            ? 'un empleado'
+            : entidadTipo === 'linea_movil'
+              ? 'una línea móvil'
+              : 'una laptop'
+        }.`
+      );
       return;
     }
     if (tipo === 'otro' && !tipoOtro.trim()) {
@@ -87,9 +144,12 @@ export function DocumentoUploader({ empleadoIdFijo }: DocumentoUploaderProps) {
     try {
       const documento = await uploadDocumento({
         file,
-        empleado_id: empleadoId,
+        empleado_id: entidadTipo === 'empleado' ? entidadId : null,
+        linea_movil_id: entidadTipo === 'linea_movil' ? entidadId : null,
+        laptop_id: entidadTipo === 'laptop' ? entidadId : null,
         tipo,
-        tipo_otro: tipoOtro
+        tipo_otro: tipoOtro,
+        etiqueta: etiqueta || null
       });
       queryClient.invalidateQueries({ queryKey: ['documentos'] });
       reset();
@@ -157,7 +217,30 @@ export function DocumentoUploader({ empleadoIdFijo }: DocumentoUploaderProps) {
 
       {file && (
         <div className='grid grid-cols-2 gap-3'>
-          {!empleadoIdFijo && (
+          {noFixed && (
+            <div className='space-y-1'>
+              <label htmlFor='doc-entidad-tipo' className='text-xs font-medium'>
+                Asociar a
+              </label>
+              <select
+                id='doc-entidad-tipo'
+                value={entidadTipo}
+                onChange={(e) => {
+                  setEntidadTipo(e.target.value as TipoEntidad);
+                  setEmpleadoId(0);
+                  setLineaMovilId(0);
+                  setLaptopId(0);
+                }}
+                className='h-8 w-full rounded-md border bg-background px-2 text-xs'
+              >
+                <option value='empleado'>Empleado</option>
+                <option value='linea_movil'>Celular</option>
+                <option value='laptop'>Notebook</option>
+              </select>
+            </div>
+          )}
+
+          {entidadTipo === 'empleado' && !empleadoIdFijo && (
             <div className='space-y-1'>
               <label htmlFor='doc-empleado' className='text-xs font-medium'>
                 Empleado
@@ -177,6 +260,67 @@ export function DocumentoUploader({ empleadoIdFijo }: DocumentoUploaderProps) {
               </select>
             </div>
           )}
+
+          {entidadTipo === 'linea_movil' && (
+            <div className='space-y-1'>
+              <label htmlFor='doc-linea' className='text-xs font-medium'>
+                Celular
+              </label>
+              <select
+                id='doc-linea'
+                value={lineaMovilId}
+                onChange={(e) => setLineaMovilId(Number(e.target.value))}
+                className='h-8 w-full rounded-md border bg-background px-2 text-xs'
+              >
+                <option value={0}>Seleccionar...</option>
+                {lineasMoviles.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.numero}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {entidadTipo === 'laptop' && (
+            <div className='space-y-1'>
+              <label htmlFor='doc-laptop' className='text-xs font-medium'>
+                Notebook
+              </label>
+              <select
+                id='doc-laptop'
+                value={laptopId}
+                onChange={(e) => setLaptopId(Number(e.target.value))}
+                className='h-8 w-full rounded-md border bg-background px-2 text-xs'
+              >
+                <option value={0}>Seleccionar...</option>
+                {laptops.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.descripcion}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className='space-y-1'>
+            <label htmlFor='doc-etiqueta' className='text-xs font-medium'>
+              Etiqueta
+            </label>
+            <select
+              id='doc-etiqueta'
+              value={etiqueta}
+              onChange={(e) => setEtiqueta(e.target.value as EtiquetaDocumento | '')}
+              className='h-8 w-full rounded-md border bg-background px-2 text-xs'
+            >
+              {ETIQUETAS.map((e) => (
+                <option key={e.value} value={e.value}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className='space-y-1'>
             <label htmlFor='doc-tipo' className='text-xs font-medium'>
               Tipo de documento
@@ -194,6 +338,7 @@ export function DocumentoUploader({ empleadoIdFijo }: DocumentoUploaderProps) {
               ))}
             </select>
           </div>
+
           {tipo === 'otro' && (
             <div className='col-span-2 space-y-1'>
               <label htmlFor='doc-tipo-otro' className='text-xs font-medium'>

@@ -15,7 +15,7 @@ export const navGroups: NavGroup[] = [
     ]
   },
   {
-    label: 'Panel Principal',
+    label: 'Panel',
     items: [
       {
         title: 'Resumen',
@@ -24,11 +24,19 @@ export const navGroups: NavGroup[] = [
         isActive: false,
         shortcut: ['d', 'd'],
         items: []
+      },
+      {
+        title: 'Calendario',
+        url: '/dashboard/calendario',
+        icon: 'calendar',
+        isActive: false,
+        shortcut: ['c', 'c'],
+        items: []
       }
     ]
   },
   {
-    label: 'Gestión de Personas',
+    label: 'Gestión',
     items: [
       {
         title: 'Legajo',
@@ -39,23 +47,23 @@ export const navGroups: NavGroup[] = [
         items: []
       },
       {
-        title: 'Calendario',
-        url: '/dashboard/calendario',
-        icon: 'calendar',
+        title: 'Flota',
+        url: '/dashboard/flota/celulares',
+        icon: 'mobile',
         isActive: false,
-        shortcut: ['c', 'c'],
-        items: []
+        shortcut: ['f', 'f'],
+        items: [
+          { title: 'Celulares', url: '/dashboard/flota/celulares', shortcut: ['f', 'c'] },
+          { title: 'Laptops', url: '/dashboard/flota/laptops', shortcut: ['f', 'l'] }
+        ]
       },
       {
-        title: 'People',
-        url: '/dashboard/people',
-        icon: 'talent',
+        title: 'Documentos',
+        url: '/dashboard/documents',
+        icon: 'documents',
         isActive: false,
-        shortcut: ['t', 't'],
-        items: [
-          { title: 'Reuniones', url: '/dashboard/people/reuniones', shortcut: ['r', 'r'] },
-          { title: 'Manuales', url: '/dashboard/people/manuales', shortcut: ['m', 'm'] }
-        ]
+        shortcut: ['d', 'o'],
+        items: []
       },
       {
         title: 'Sueldos',
@@ -63,64 +71,6 @@ export const navGroups: NavGroup[] = [
         icon: 'payroll',
         isActive: false,
         shortcut: ['s', 's'],
-        items: []
-      }
-    ]
-  },
-  {
-    label: 'Administración',
-    items: [
-      {
-        title: 'Flota',
-        url: '/dashboard/flota/celulares',
-        icon: 'mobile',
-        isActive: false,
-        shortcut: ['f', 'f'],
-        items: [
-          { title: 'Flota de Celulares', url: '/dashboard/flota/celulares', shortcut: ['f', 'c'] },
-          { title: 'Flota de Laptops', url: '/dashboard/flota/laptops', shortcut: ['f', 'l'] }
-        ]
-      },
-      {
-        title: 'Expedientes',
-        url: '/dashboard/documents',
-        icon: 'documents',
-        isActive: false,
-        shortcut: ['e', 'e'],
-        items: []
-      }
-    ]
-  },
-  {
-    label: 'Integraciones',
-    items: [
-      {
-        title: 'Google Sheets',
-        url: '/dashboard/google-sheets',
-        icon: 'sheets',
-        isActive: false,
-        shortcut: ['g', 's'],
-        items: []
-      }
-    ]
-  },
-  {
-    label: 'Configuración',
-    items: [
-      {
-        title: 'Notificaciones',
-        url: '/dashboard/notifications',
-        icon: 'notification',
-        isActive: false,
-        shortcut: ['n', 'n'],
-        items: []
-      },
-      {
-        title: 'Configuración',
-        url: '/dashboard/settings',
-        icon: 'settings',
-        isActive: false,
-        shortcut: ['c', 'f'],
         items: []
       }
     ]

@@ -56,7 +56,7 @@ export const sectionHelp = {
     ]
   },
   payroll: {
-    title: 'Salarios',
+    title: 'Sueldos',
     sections: [
       {
         title: 'Vista general',
@@ -72,6 +72,11 @@ export const sectionHelp = {
         title: 'Bonos anuales',
         description:
           'Además del sueldo mensual, cada empleado puede tener un bono anual registrado. Aparece como una tarjeta separada dentro del panel del empleado.'
+      },
+      {
+        title: 'Importar desde Sheets',
+        description:
+          'Usá el botón "Importar desde Google Sheets" para cargar sueldos desde una planilla. El sistema detecta automáticamente la moneda y el período de cada pestaña.'
       }
     ]
   },
@@ -81,7 +86,7 @@ export const sectionHelp = {
       {
         title: 'Vista general',
         description:
-          'Vista de calendario mensual que consolida licencias, vacaciones, días de estudio y ausencias de todos los empleados. Cada tipo de evento tiene su propio color.'
+          'Vista de calendario mensual que consolida licencias, vacaciones, días de estudio, ausencias, mudanzas, cumpleaños y reuniones. Cada tipo de evento tiene su propio color.'
       },
       {
         title: 'Filtros y leyenda',
@@ -95,103 +100,43 @@ export const sectionHelp = {
       }
     ]
   },
-  people: {
-    title: 'Gestión de Personas',
-    sections: [
-      {
-        title: 'Secciones',
-        description:
-          'Agrupa el legajo de empleados, reuniones (minutas) y manuales de la empresa. Es el centro de gestión del capital humano.'
-      },
-      {
-        title: 'Reuniones',
-        description:
-          'Registro de minutas de reuniones: título, fecha, hora, asistentes y resumen. Podés crear, editar y eliminar reuniones con confirmación y undo.'
-      },
-      {
-        title: 'Manuales',
-        description:
-          'Repositorio de archivos PDF, Word y Excel organizados por área. Podés subir archivos (drag & drop), descargarlos y eliminarlos. Los archivos se almacenan en Supabase Storage con URLs firmadas.'
-      }
-    ]
-  },
   flota: {
     title: 'Flota de Equipos',
     sections: [
       {
         title: 'Celulares',
         description:
-          'Líneas móviles asignadas a empleados. Muestra número, titular, equipo, compañía y estado (asignado, disponible, en reparación, dado de baja).'
+          'Líneas móviles asignadas a empleados. Muestra número, rol, usuario, equipo y estado (asignado, disponible, baja). Podés reordenar con las flechas, crear, editar y eliminar.'
       },
       {
         title: 'Laptops',
         description:
-          'Equipos portátiles asignados. Muestra marca, modelo, número de serie, usuario asignado, equipo de Windows, ubicación física y estado.'
+          'Equipos portátiles asignados. Muestra marca, modelo, número de serie, usuario asignado, equipo y estado. Podés crear, editar y eliminar registros.'
       },
       {
-        title: 'Gestión',
+        title: 'Deshacer',
         description:
-          'Ambas tablas permiten crear, editar y eliminar registros. Las eliminaciones tienen confirmación y permiten deshacer durante 10 segundos.'
+          'Ambas tablas permiten deshacer durante 15 segundos cualquier creación o eliminación. Las ediciones de legajo también tienen undo.'
       }
     ]
   },
-  notificaciones: {
-    title: 'Notificaciones',
-    sections: [
-      {
-        title: 'Historial de actividad',
-        description:
-          'Registro automático generado por la base de datos. Cada vez que se crea, modifica o elimina un empleado, puesto, reunión, manual, laptop o línea móvil, se registra una notificación.'
-      },
-      {
-        title: 'Próximos eventos',
-        description:
-          'Además del historial, se muestran los eventos de los próximos 5 días: reuniones y cumpleaños. Esto te da visibilidad inmediata de lo que viene.'
-      },
-      {
-        title: 'Filtros y acciones',
-        description:
-          'Podés filtrar por tipo de entidad (empleados, reuniones, etc.) y por tipo de acción (creación, modificación, eliminación). Las notificaciones se pueden marcar como leídas.'
-      }
-    ]
-  },
-  reuniones: {
-    title: 'Reuniones',
+  documentos: {
+    title: 'Documentos',
     sections: [
       {
         title: 'Vista general',
         description:
-          'Tabla con todas las reuniones registradas: título, fecha, hora y asistentes. Ordenadas por fecha, las más recientes primero.'
+          'Repositorio de archivos asociados a empleados, celulares y notebooks. Cada documento muestra su archivo, tipo, etiqueta y a quién está asociado.'
       },
       {
-        title: 'Minutas y notas',
+        title: 'Subir documentos',
         description:
-          'Cada reunión puede tener un resumen o minuta con notas. Al editar una reunión podés agregar o modificar el detalle de lo tratado.'
-      },
-      {
-        title: 'Acciones',
-        description:
-          'Crear nueva reunión, editar datos, ver detalle completo y eliminar. Las eliminaciones piden confirmación y permiten deshacer durante 10 segundos.'
-      }
-    ]
-  },
-  manuales: {
-    title: 'Manuales',
-    sections: [
-      {
-        title: 'Vista general',
-        description:
-          'Biblioteca de documentos organizada por área de la empresa. Cada manual tiene un nombre de archivo, área asociada, fecha de subida y tamaño.'
-      },
-      {
-        title: 'Subir archivos',
-        description:
-          'Arrastrá y soltá archivos PDF, Word (.doc, .docx) o Excel (.xls, .xlsx) sobre la zona de carga. Límite de 50 MB por archivo. Los archivos se guardan en Supabase Storage.'
+          'Arrastrá y soltá archivos PDF, Word o imágenes sobre la zona de carga. Seleccioná si el documento se asocia a un empleado, celular o notebook. Asignale una etiqueta (Legal, Contable, RRHH, Contrato, Seguro) para filtrar después.'
       },
       {
         title: 'Descargar y eliminar',
         description:
-          'Clic en el ícono de descarga para bajar el archivo. Clic en el ícono de eliminar para borrarlo (con confirmación y undo). Las URLs de descarga son firmadas y temporales.'
+          'Clic en el ícono de descarga para bajar el archivo. Clic en el ícono de eliminar para borrarlo. La eliminación permite deshacer durante 15 segundos; vencido ese plazo, el archivo se purga del storage.'
       }
     ]
   }

@@ -2,14 +2,14 @@ import PageContainer from '@/components/layout/page-container';
 import DocumentosListingPage from '@/features/documents/components/documentos-listing';
 
 export const metadata = {
-  title: 'Dashboard: Expediente Digital'
+  title: 'Dashboard: Documentos'
 };
 
 export default function DocumentsPage() {
   return (
     <PageContainer
-      pageTitle='Expediente Digital'
-      pageDescription='Gestión de documentos y archivos de empleados'
+      pageTitle='Documentos'
+      pageDescription='Gestión de documentos y archivos de empleados, celulares y notebooks'
     >
       <DocumentosListingPage />
     </PageContainer>
