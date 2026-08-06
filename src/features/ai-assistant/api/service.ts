@@ -30,13 +30,26 @@ export type AiContextMemory = {
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
 
+// Título de la conversación a partir del primer mensaje del usuario. Sin esto
+// el historial mostraba "Sin título" en todas las filas: la columna existía y
+// updateSessionTitle también, pero nadie los llamaba.
+export function buildSessionTitle(primerMensaje: string): string {
+  const limpio = primerMensaje.replace(/\s+/g, ' ').trim();
+  if (limpio.length <= 80) return limpio;
+  // Corta en el último espacio antes del límite para no partir una palabra
+  const corte = limpio.slice(0, 80);
+  const ultimoEspacio = corte.lastIndexOf(' ');
+  return `${ultimoEspacio > 40 ? corte.slice(0, ultimoEspacio) : corte}…`;
+}
+
 export async function createSession(
   mode: AssistantMode,
-  skill: string | null = null
+  skill: string | null = null,
+  primerMensaje?: string
 ): Promise<AiSession> {
   const { data, error } = await supabase
     .from('ai_sessions')
-    .insert({ mode, skill })
+    .insert({ mode, skill, title: primerMensaje ? buildSessionTitle(primerMensaje) : null })
     .select()
     .single();
   if (error) throw new Error(error.message);

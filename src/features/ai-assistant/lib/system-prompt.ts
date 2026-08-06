@@ -19,7 +19,8 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
     reunionesRes,
     eventosRes,
     manualesRes,
-    notificacionesRes
+    notificacionesRes,
+    reglasRes
   ] = await Promise.all([
     supabase.from('google_sheets').select('name, url'),
     supabase
@@ -67,7 +68,8 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
       .from('notificaciones')
       .select('entidad, accion, descripcion, created_at')
       .order('created_at', { ascending: false })
-      .limit(15)
+      .limit(15),
+    supabase.rpc('ai_schema_rules')
   ]);
 
   const sheets = sheetsRes.data ?? [];
@@ -84,6 +86,11 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
   const eventos = (eventosRes.data ?? []) as Record<string, unknown>[];
   const manuales = manualesRes.data ?? [];
   const notificaciones = notificacionesRes.data ?? [];
+  const reglas = (reglasRes.data ?? []) as {
+    tabla: string;
+    tipo_regla: string;
+    detalle: string;
+  }[];
 
   // Mapa id → nombre para que la IA no tenga que cruzar ids a mano
   const nombrePorId = new Map(empleados.map((e) => [e.id, e.nombre_apellido]));
@@ -230,6 +237,46 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
   // volcarle todo acá solo gasta contexto y le tapa las instrucciones. Se deja
   // la lista de empleados (necesita los ids para todo) y se reemplaza el resto
   // por un puntero. En modo chat se sigue volcando: no encadena consultas.
+  // Reglas reales del esquema, leídas de Postgres. Sin esto el modelo adivina
+  // los valores permitidos y termina forzando el dato en la columna equivocada.
+  const reglasPorTabla = new Map<string, { checks: string[]; obligatorias: string[] }>();
+  for (const r of reglas) {
+    const entry = reglasPorTabla.get(r.tabla) ?? { checks: [], obligatorias: [] };
+    if (r.tipo_regla === 'check') {
+      const limpio = r.detalle.replace(/::text/g, '');
+      // "CHECK ((tipo = ANY (ARRAY['estudio', 'mudanza'])))" → "tipo: 'estudio' | 'mudanza'"
+      const enumerado = limpio.match(/\((\w+)\s*=\s*ANY\s*\(ARRAY\[(.*?)\]\)\)/);
+      entry.checks.push(
+        enumerado
+          ? `${enumerado[1]}: ${enumerado[2].split(', ').join(' | ')}`
+          : // "CHECK (((mes >= 1) AND (mes <= 12)))" → "mes >= 1 AND mes <= 12"
+            limpio
+              .replace(/^CHECK\s*/, '')
+              .replace(/[()]/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+      );
+    } else {
+      entry.obligatorias.push(r.detalle);
+    }
+    reglasPorTabla.set(r.tabla, entry);
+  }
+
+  const reglasList =
+    reglasPorTabla.size > 0
+      ? [...reglasPorTabla.entries()]
+          .map(([tabla, { checks, obligatorias }]) =>
+            [
+              `- \`${tabla}\``,
+              checks.length > 0 ? `    valores permitidos → ${checks.join(' · ')}` : null,
+              obligatorias.length > 0 ? `    obligatorias → ${obligatorias.join(', ')}` : null
+            ]
+              .filter(Boolean)
+              .join('\n')
+          )
+          .join('\n')
+      : '  (no se pudieron leer las reglas del esquema)';
+
   const bajoDemanda = (lista: string, tabla: string) =>
     mode === 'build' ? `  (consultalo con query_data sobre \`${tabla}\`)` : lista;
 
@@ -385,6 +432,44 @@ ${tabList || '  (ninguna pestaña sincronizada)'}
 
 ## Memoria de contexto acumulada
 ${memoryList}
+
+## ⚠️ Reglas del esquema — valores permitidos y campos obligatorios
+
+Estos son los valores que la base acepta de verdad. **Si el valor que querés
+escribir no está en esta lista, la acción va a fallar o —peor— vas a terminar
+guardando un dato falso en la columna equivocada.**
+
+${reglasList}
+
+Ojo con \`modalidad\`: en \`empleados\` va en minúscula y en \`home_office_semanal\`
+va capitalizada. No son intercambiables.
+
+## ⚠️ Cosas que NO se guardan porque se calculan solas
+
+El dashboard deriva varias entidades del calendario. **No existen como filas** y
+crear una fila para representarlas produce datos falsos:
+
+| Lo que te piden | Dónde vive realmente | Qué hacer |
+|---|---|---|
+| Cumpleaños | \`empleados.fecha_nacimiento\` | Si falta o está mal, corregí **ese campo**. El calendario lo muestra solo, todos los años. Nunca crear un evento. |
+| Licencia / vacaciones | \`vacaciones\` + \`vacaciones_dias\` | Cargar los días tomados ahí. |
+| Reunión | \`reuniones\` | Es su propia tabla, no un evento de calendario. |
+| Antigüedad, edad, saldos | se calculan al vuelo | No hay columna que escribir. |
+
+\`eventos_calendario\` es **solo** para días de estudio, mudanzas y ausencias.
+
+**Nunca uses un tipo que no corresponde para "que aparezca en el calendario".**
+Si lo que te piden no encaja en ningún tipo permitido, decílo y explicá de dónde
+sale ese dato en realidad. Es preferible no hacer nada que ensuciar la base.
+
+## ⚠️ Fechas
+
+- Siempre en formato ISO \`YYYY-MM-DD\`. Nunca DD/MM ni MM/DD.
+- **Si la fecha ya existe en la base, leela con \`query_data\` — no la deduzcas.**
+  Un cumpleaños del 8 de mayo es \`fecha_nacimiento = '1994-05-08'\`, y escribirlo
+  como \`2026-08-05\` es otro día del año.
+- Antes de proponer una acción con fechas, repetí en tu respuesta qué fecha
+  leíste y de qué columna salió, para que el usuario pueda verificarla.
 
 ## Reglas de negocio críticas
 

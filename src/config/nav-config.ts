@@ -2,6 +2,19 @@ import { NavGroup } from '@/types';
 
 export const navGroups: NavGroup[] = [
   {
+    label: 'Asistente',
+    items: [
+      {
+        title: 'Asistente IA',
+        url: '/dashboard/assistant',
+        icon: 'sparkles',
+        isActive: false,
+        shortcut: ['a', 'i'],
+        items: []
+      }
+    ]
+  },
+  {
     label: 'Panel Principal',
     items: [
       {
@@ -87,14 +100,6 @@ export const navGroups: NavGroup[] = [
         icon: 'sheets',
         isActive: false,
         shortcut: ['g', 's'],
-        items: []
-      },
-      {
-        title: 'Asistente IA',
-        url: '/dashboard/assistant',
-        icon: 'sparkles',
-        isActive: false,
-        shortcut: ['a', 'i'],
         items: []
       }
     ]

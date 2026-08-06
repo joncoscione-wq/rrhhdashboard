@@ -161,7 +161,7 @@ export function ChatInterface({
     void (async () => {
       try {
         if (!sessionIdRef.current) {
-          const session = await createSession(mode);
+          const session = await createSession(mode, null, content);
           sessionIdRef.current = session.id;
           onSessionCreated?.(session.id);
         }

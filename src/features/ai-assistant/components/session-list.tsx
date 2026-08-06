@@ -110,9 +110,13 @@ export function SessionList({
                   : 'hover:bg-muted text-muted-foreground hover:text-foreground'
               }`}
             >
-              <div className='flex items-center justify-between gap-1'>
-                <span className='truncate font-medium'>{session.title ?? 'Sin título'}</span>
-                {isLoading && <Icons.spinner className='h-3 w-3 animate-spin shrink-0' />}
+              <div className='flex items-start justify-between gap-1'>
+                {/* Dos líneas antes de recortar: con `truncate` un título de
+                    una frase entera se veía como tres palabras sueltas */}
+                <span className='line-clamp-2 font-medium leading-snug break-words'>
+                  {session.title ?? 'Sin título'}
+                </span>
+                {isLoading && <Icons.spinner className='mt-0.5 h-3 w-3 animate-spin shrink-0' />}
               </div>
               <div className='flex items-center gap-1.5'>
                 <Badge
