@@ -27,6 +27,9 @@ create index if not exists ai_agent_log_table_idx on ai_agent_log (table_name);
 alter table ai_agent_log enable row level security;
 
 -- Mismo patrón que el resto de las tablas del dashboard (app monotenant detrás
--- de PIN; ver migración 20260709_00005_auditoria_produccion)
+-- de PIN; ver migración 20260709_00005_auditoria_produccion). La lectura desde
+-- el browser necesita anon porque la app no usa auth de Supabase sino su propio
+-- PIN vía proxy.
+drop policy if exists ai_agent_log_write on ai_agent_log;
 create policy ai_agent_log_write on ai_agent_log
   for all to anon, authenticated using (true) with check (true);
