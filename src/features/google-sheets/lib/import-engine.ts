@@ -222,6 +222,13 @@ async function importLegajo(
       } else if (dbCol === 'activo') {
         const b = parseBool(raw);
         if (b !== null) mapped[dbCol] = b;
+      } else if (dbCol === 'email') {
+        // Cuando la celda del sheet es un hipervínculo, lo que llega es el href
+        // ("mailto:x@y.com") en vez del texto. Quedaron 19 empleados así, y el
+        // prefijo además enmascaraba duplicados: dos filas con el mismo mail no
+        // chocaban porque una lo tenía con "mailto:" y la otra sin.
+        const limpio = raw.replace(/^mailto:/i, '').trim();
+        if (limpio && limpio !== '-' && limpio.includes('@')) mapped[dbCol] = limpio;
       } else {
         mapped[dbCol] = raw;
       }
@@ -272,11 +279,39 @@ async function importLegajo(
         skipped++;
         continue;
       }
-      const { data: inserted, error } = await supabase
+      let { data: inserted, error } = await supabase
         .from('empleados')
         .insert({ ...mapped, empresa_id: 1 })
         .select('id')
         .single();
+
+      // La base tiene un índice único sobre el nombre normalizado, así que si
+      // este nombre ya existe con otro formato ("Barbara Urrutia" vs
+      // "URRUTIA, Barbara") el insert rebota. No es un error: es el mismo
+      // empleado, y lo que corresponde es actualizarlo, no descartar la fila.
+      if (error?.code === '23505') {
+        const id = await resolveEmpleadoId(mapped.nombre_apellido as string);
+        if (id) {
+          const { error: updateError } = await supabase
+            .from('empleados')
+            .update(mapped)
+            .eq('id', id);
+          if (updateError) {
+            console.error('[import] empleados update tras duplicado:', updateError.message);
+            skipped++;
+            continue;
+          }
+          if (puestoVal) {
+            await supabase
+              .from('puestos')
+              .upsert({ empleado_id: id, puesto: puestoVal }, { onConflict: 'empleado_id' });
+          }
+          updated++;
+          continue;
+        }
+        console.error('[import] empleados duplicado sin resolver:', mapped.nombre_apellido);
+      }
+
       if (error) {
         console.error('[import] empleados insert:', error.message);
         skipped++;

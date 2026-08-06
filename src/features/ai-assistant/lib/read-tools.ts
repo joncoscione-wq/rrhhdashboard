@@ -35,7 +35,9 @@ const READABLE_TABLES = [
   'sheet_sections',
   // auditoría del propio agente
   'ai_agent_log',
-  'ai_context_memory'
+  'ai_context_memory',
+  // sueldos que quedaron en conflicto al fusionar empleados duplicados
+  'merge_sueldos_conflicto'
 ] as const;
 
 const OPERATORS = ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'is', 'in'] as const;
