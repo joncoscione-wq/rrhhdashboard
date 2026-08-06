@@ -1,8 +1,165 @@
 import { NextResponse } from 'next/server';
 import { buildSystemPrompt } from '@/features/ai-assistant/lib/system-prompt';
-import type { ChatRequest } from '@/features/ai-assistant/api/types';
+import {
+  QUERY_DATA_TOOL,
+  runQueryData,
+  type QueryDataArgs
+} from '@/features/ai-assistant/lib/read-tools';
+import type { ChatRequest, ProposedAction } from '@/features/ai-assistant/api/types';
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
+
+// Cuántas veces puede el agente leer y volver a pensar dentro de un mismo turno.
+// Sin esto era un solo disparo: proponía a ciegas, sin poder verificar nada.
+const MAX_STEPS = 6;
+
+export const maxDuration = 120;
+
+const PROPOSE_ACTION_TOOL = {
+  type: 'function' as const,
+  function: {
+    name: 'propose_action',
+    description:
+      'Propone una acción de escritura sobre una tabla de negocio de RRHH. Nunca ejecuta nada: la acción se le muestra al usuario para que la confirme. Llamala solo después de haber verificado los datos con query_data.',
+    parameters: {
+      type: 'object',
+      properties: {
+        type: {
+          type: 'string',
+          enum: ['upsert', 'update', 'delete'],
+          description:
+            'upsert: insertar o actualizar por columna(s) de conflicto. update: modificar registros existentes por match_column. delete: baja lógica (empleados) o física.'
+        },
+        table: {
+          type: 'string',
+          description:
+            'Tabla de negocio: empleados, sueldos, vacaciones, vacaciones_dias, lineas_moviles, flota_laptops, home_office_semanal, reuniones, manuales, puestos, eventos_calendario'
+        },
+        description: {
+          type: 'string',
+          description: 'Qué hace esta acción y por qué, en español claro'
+        },
+        risk: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description:
+            'low: 1 registro reversible. medium: varios registros o FK. high: >20 registros o columnas críticas (moneda, monto, activo)'
+        },
+        records: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: true },
+          description:
+            'Filas a escribir. Deben incluir la(s) columna(s) clave. Para empleados usar el id numérico obtenido con query_data.'
+        },
+        conflict_column: {
+          type: 'string',
+          description:
+            'Solo upsert: columna(s) de conflicto. Para claves compuestas, separadas por coma sin espacios, ej. "empleado_id,mes,anio,moneda" en sueldos.'
+        },
+        match_column: {
+          type: 'string',
+          description:
+            'Solo update/delete: columna(s) para ubicar los registros, separadas por coma si son varias (normalmente "id")'
+        },
+        affected_rows_estimate: { type: 'number' }
+      },
+      required: ['type', 'table', 'description', 'risk', 'records']
+    }
+  }
+};
+
+type ToolCallAcc = { id: string; name: string; arguments: string };
+
+type ChatCompletionMessage = {
+  role: string;
+  content?: string | null;
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+};
+
+/**
+ * Ejecuta un paso contra DeepSeek en streaming, reenviando el texto token a
+ * token y acumulando los tool_calls (que llegan como deltas parciales por
+ * índice, no completos).
+ */
+async function runStep(
+  convo: ChatCompletionMessage[],
+  tools: unknown[] | undefined,
+  apiKey: string,
+  onText: (chunk: string) => void
+): Promise<{ content: string; toolCalls: ToolCallAcc[] }> {
+  const upstream = await fetch(DEEPSEEK_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      stream: true,
+      messages: convo,
+      temperature: 0.3,
+      max_tokens: 2048,
+      ...(tools ? { tools, tool_choice: 'auto' as const } : {})
+    })
+  });
+
+  if (!upstream.ok) {
+    throw new Error(`DeepSeek respondió ${upstream.status}: ${await upstream.text()}`);
+  }
+
+  const reader = upstream.body!.getReader();
+  const decoder = new TextDecoder();
+  const acc: Record<number, ToolCallAcc> = {};
+  let content = '';
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    // Un chunk puede cortar una línea al medio: se acumula y solo se procesan
+    // las líneas completas.
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (!data || data === '[DONE]') continue;
+
+      try {
+        const delta = JSON.parse(data).choices?.[0]?.delta;
+        if (!delta) continue;
+
+        if (delta.content) {
+          content += delta.content;
+          onText(delta.content);
+        }
+
+        for (const tc of delta.tool_calls ?? []) {
+          const idx = tc.index ?? 0;
+          acc[idx] ??= { id: '', name: '', arguments: '' };
+          if (tc.id) acc[idx].id += tc.id;
+          if (tc.function?.name) acc[idx].name += tc.function.name;
+          if (tc.function?.arguments) acc[idx].arguments += tc.function.arguments;
+        }
+      } catch {
+        // línea SSE no parseable: se ignora, el stream sigue
+      }
+    }
+  }
+
+  return { content, toolCalls: Object.values(acc) };
+}
+
+function resumenLectura(args: QueryDataArgs, result: { count?: number; error?: string }): string {
+  if (result.error) return `${args.table}: error — ${result.error}`;
+  const filtros = (args.filters ?? []).map((f) => `${f.column} ${f.op} ${JSON.stringify(f.value)}`);
+  const donde = filtros.length > 0 ? ` (${filtros.join(', ')})` : '';
+  return `${args.table}${donde} → ${result.count ?? 0} ${result.count === 1 ? 'fila' : 'filas'}`;
+}
 
 export async function POST(request: Request) {
   const apiKey = process.env.DEEPSEEK_API_KEY;
@@ -18,96 +175,111 @@ export async function POST(request: Request) {
   }
 
   const systemPrompt = await buildSystemPrompt(mode ?? 'chat');
-  // Visible en logs de Vercel: cuánto contexto se manda en cada mensaje
   console.warn(
     `[ai/chat] system prompt: ${systemPrompt.length} chars (~${Math.round(systemPrompt.length / 3.5)} tokens) | mode=${mode ?? 'chat'} | historial=${messages.length} mensajes`
   );
 
-  // En modo build el asistente propone acciones con function calling real
-  // (antes: el modelo imprimía un bloque ```json que se parseaba con regex —
-  // frágil). La acción llega como tool_call estructurado y la UI pide
-  // confirmación antes de ejecutarla vía /api/ai/execute.
-  const tools =
-    mode === 'build'
-      ? [
-          {
-            type: 'function' as const,
-            function: {
-              name: 'propose_action',
-              description:
-                'Propone una acción de escritura sobre una tabla de negocio de RRHH. Nunca ejecuta nada: la acción se muestra al usuario para confirmación.',
-              parameters: {
-                type: 'object',
-                properties: {
-                  type: {
-                    type: 'string',
-                    enum: ['upsert', 'update', 'delete'],
-                    description:
-                      'upsert: insertar o actualizar por columna de conflicto. update: modificar registros existentes por match_column. delete: baja lógica (empleados) o física.'
-                  },
-                  table: {
-                    type: 'string',
-                    description:
-                      'Tabla de negocio: empleados, sueldos, vacaciones, lineas_moviles, flota_laptops, home_office_semanal, reuniones, manuales, puestos'
-                  },
-                  description: {
-                    type: 'string',
-                    description: 'Qué hace esta acción y por qué, en español claro'
-                  },
-                  risk: {
-                    type: 'string',
-                    enum: ['low', 'medium', 'high'],
-                    description:
-                      'low: 1 registro reversible. medium: varios registros o FK. high: >20 registros o columnas críticas (moneda, monto, activo)'
-                  },
-                  records: {
-                    type: 'array',
-                    items: { type: 'object', additionalProperties: true },
-                    description:
-                      'Filas a escribir. Para update/delete deben incluir la match_column. Para empleados usar el id numérico de la lista de empleados del contexto.'
-                  },
-                  conflict_column: {
-                    type: 'string',
-                    description: 'Solo upsert: columna de conflicto (default id)'
-                  },
-                  match_column: {
-                    type: 'string',
-                    description: 'Solo update/delete: columna para ubicar los registros (ej. id)'
-                  },
-                  affected_rows_estimate: { type: 'number' }
-                },
-                required: ['type', 'table', 'description', 'risk', 'records']
-              }
+  // En ambos modos el agente puede LEER. Lo que cambia es si puede proponer
+  // escrituras: eso sigue siendo exclusivo de build, y siempre con confirmación.
+  const tools = mode === 'build' ? [QUERY_DATA_TOOL, PROPOSE_ACTION_TOOL] : [QUERY_DATA_TOOL];
+
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (event: Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      };
+
+      const convo: ChatCompletionMessage[] = [
+        { role: 'system', content: systemPrompt },
+        ...messages.map((m) => ({ role: m.role, content: m.content }))
+      ];
+
+      try {
+        for (let step = 0; step < MAX_STEPS; step++) {
+          const { content, toolCalls } = await runStep(convo, tools, apiKey, (chunk) =>
+            emit({ t: 'text', v: chunk })
+          );
+
+          if (toolCalls.length === 0) break;
+
+          convo.push({
+            role: 'assistant',
+            content: content || null,
+            tool_calls: toolCalls.map((tc) => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: { name: tc.name, arguments: tc.arguments }
+            }))
+          });
+
+          const propuesta = toolCalls.find((tc) => tc.name === 'propose_action');
+          if (propuesta) {
+            try {
+              const action = JSON.parse(propuesta.arguments) as ProposedAction;
+              emit({ t: 'action', action: { ...action, status: 'pending' } });
+            } catch {
+              emit({ t: 'error', message: 'El asistente propuso una acción con formato inválido' });
             }
+            // El turno termina acá: la escritura espera confirmación del usuario.
+            break;
           }
-        ]
-      : undefined;
 
-  const payload = {
-    model: 'deepseek-chat',
-    stream: true,
-    messages: [{ role: 'system', content: systemPrompt }, ...messages],
-    temperature: 0.3,
-    max_tokens: 2048,
-    ...(tools ? { tools, tool_choice: 'auto' as const } : {})
-  };
+          // Solo quedaron lecturas: se ejecutan y el resultado vuelve al modelo
+          // para que siga razonando en el próximo paso.
+          for (const tc of toolCalls) {
+            if (tc.name !== 'query_data') {
+              convo.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: `Herramienta desconocida: ${tc.name}`
+              });
+              continue;
+            }
 
-  const upstream = await fetch(DEEPSEEK_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(payload)
+            let args: QueryDataArgs;
+            try {
+              args = JSON.parse(tc.arguments) as QueryDataArgs;
+            } catch {
+              convo.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: 'Argumentos inválidos: no son JSON válido'
+              });
+              continue;
+            }
+
+            const result = await runQueryData(args);
+            const resumen = resumenLectura(args, result);
+            console.warn(`[ai/chat] query_data → ${resumen}`);
+            emit({ t: 'tool', name: 'query_data', summary: resumen });
+
+            convo.push({
+              role: 'tool',
+              tool_call_id: tc.id,
+              content: JSON.stringify(result)
+            });
+          }
+
+          if (step === MAX_STEPS - 1) {
+            emit({
+              t: 'error',
+              message: `El asistente hizo ${MAX_STEPS} consultas sin llegar a una respuesta. Probá acotar el pedido.`
+            });
+          }
+        }
+
+        emit({ t: 'done' });
+      } catch (err) {
+        emit({ t: 'error', message: (err as Error).message });
+      } finally {
+        controller.close();
+      }
+    }
   });
 
-  if (!upstream.ok) {
-    const err = await upstream.text();
-    return NextResponse.json({ error: err }, { status: upstream.status });
-  }
-
-  // Stream the response directly to the client
-  return new Response(upstream.body, {
+  return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',

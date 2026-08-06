@@ -20,7 +20,8 @@ const STATUS_CONFIG = {
   approved: { label: 'aprobando…', className: 'text-amber-600', icon: 'spinner' },
   rejected: { label: 'rechazado', className: 'text-muted-foreground', icon: 'xCircle' },
   executed: { label: 'ejecutado', className: 'text-emerald-600', icon: 'circleCheck' },
-  error: { label: 'error', className: 'text-red-600', icon: 'alertCircle' }
+  error: { label: 'error', className: 'text-red-600', icon: 'alertCircle' },
+  reverted: { label: 'deshecho', className: 'text-muted-foreground', icon: 'undo' }
 } as const;
 
 const RISK_BADGE = {

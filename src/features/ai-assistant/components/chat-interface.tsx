@@ -7,39 +7,53 @@ import { Badge } from '@/components/ui/badge';
 import { Icons } from '@/components/icons';
 import { toast } from 'sonner';
 import { ActionPreview } from './action-preview';
-import type { ChatMessage, AssistantMode, ProposedAction } from '../api/types';
+import type {
+  ChatMessage,
+  AssistantMode,
+  ProposedAction,
+  ChatStreamEvent,
+  ToolActivity
+} from '../api/types';
 import type { LogEntry } from './action-log';
 import { createSession, saveMessage } from '../api/service';
 
-function toProposedAction(parsed: Record<string, unknown>): ProposedAction | null {
-  if (parsed.type && parsed.table && Array.isArray(parsed.records)) {
-    return { ...parsed, status: 'pending' } as unknown as ProposedAction;
-  }
-  return null;
-}
+/** Lecturas que hizo el agente antes de responder — hace auditable en qué se basó. */
+function ActivityTrail({ activity }: { activity: ToolActivity[] }) {
+  const [open, setOpen] = useState(false);
 
-// Fallback histórico: el modelo imprimía la acción como bloque ```json en el
-// texto. Se mantiene por compatibilidad, pero el camino principal es el
-// tool_call estructurado (function calling de DeepSeek).
-function parseProposedAction(content: string): ProposedAction | null {
-  const match = content.match(/```json\s*([\s\S]*?)\s*```/);
-  if (!match) return null;
-  try {
-    return toProposedAction(JSON.parse(match[1]));
-  } catch {
-    return null;
-  }
+  return (
+    <div className='text-xs text-muted-foreground'>
+      <button
+        onClick={() => setOpen(!open)}
+        className='flex items-center gap-1 hover:text-foreground transition-colors'
+      >
+        {open ? <Icons.chevronUp className='h-3 w-3' /> : <Icons.chevronDown className='h-3 w-3' />}
+        Consultó la base ({activity.length} {activity.length === 1 ? 'vez' : 'veces'})
+      </button>
+      {open && (
+        <ul className='mt-1 space-y-0.5 border-l pl-2'>
+          {activity.map((a, i) => (
+            <li key={i} className='font-mono text-[10px]'>
+              {a.summary}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function MessageBubble({
   message,
   onApproveAction,
   onRejectAction,
+  onRevertAction,
   executingId
 }: {
   message: ChatMessage;
   onApproveAction: (msgId: string, action: ProposedAction) => void;
   onRejectAction: (msgId: string) => void;
+  onRevertAction: (msgId: string, logId: number) => void;
   executingId: string | null;
 }) {
   const isUser = message.role === 'user';
@@ -64,11 +78,15 @@ function MessageBubble({
         >
           <p className='whitespace-pre-wrap'>{message.content}</p>
         </div>
+        {message.activity && message.activity.length > 0 && (
+          <ActivityTrail activity={message.activity} />
+        )}
         {message.pendingAction && (
           <ActionPreview
             action={message.pendingAction}
             onApprove={() => onApproveAction(message.id, message.pendingAction!)}
             onReject={() => onRejectAction(message.id)}
+            onRevert={(logId) => onRevertAction(message.id, logId)}
             isExecuting={executingId === message.id}
           />
         )}
@@ -171,39 +189,65 @@ export function ChatInterface({
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
-      // Los tool_calls llegan por streaming como deltas parciales (index-based)
-      const toolCallsAcc: Record<number, { name: string; arguments: string }> = {};
+      let action: ProposedAction | null = null;
+      const activity: ToolActivity[] = [];
+      let streamError: string | null = null;
+      // Un chunk de red puede cortar un evento SSE al medio: se acumula y solo
+      // se procesan las líneas completas.
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n').filter((l) => l.startsWith('data: '));
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
 
         for (const line of lines) {
-          const data = line.slice(6);
-          if (data === '[DONE]') continue;
+          if (!line.startsWith('data: ')) continue;
+          let event: ChatStreamEvent;
           try {
-            const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta;
-            const content = delta?.content ?? '';
-            if (content) {
-              fullContent += content;
-              setMessages((prev) =>
-                prev.map((m) => (m.id === assistantMsgId ? { ...m, content: fullContent } : m))
-              );
-            }
-            const toolCalls = delta?.tool_calls;
-            if (Array.isArray(toolCalls)) {
-              for (const tc of toolCalls) {
-                const idx = tc.index ?? 0;
-                if (!toolCallsAcc[idx]) toolCallsAcc[idx] = { name: '', arguments: '' };
-                if (tc.function?.name) toolCallsAcc[idx].name += tc.function.name;
-                if (tc.function?.arguments) toolCallsAcc[idx].arguments += tc.function.arguments;
-              }
-            }
-          } catch {}
+            event = JSON.parse(line.slice(6)) as ChatStreamEvent;
+          } catch {
+            continue;
+          }
+
+          if (event.t === 'text') {
+            fullContent += event.v;
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantMsgId ? { ...m, content: fullContent } : m))
+            );
+          } else if (event.t === 'tool') {
+            // El agente consultó la base: se muestra en qué se está basando
+            activity.push({ name: event.name, summary: event.summary });
+            setMessages((prev) =>
+              prev.map((m) => (m.id === assistantMsgId ? { ...m, activity: [...activity] } : m))
+            );
+          } else if (event.t === 'action') {
+            action = event.action;
+          } else if (event.t === 'error') {
+            streamError = event.message;
+          }
+        }
+      }
+
+      if (streamError) throw new Error(streamError);
+
+      // Si el agente solo propuso la acción sin texto, la descripción hace de mensaje
+      if (action && !fullContent.trim()) {
+        fullContent = action.description;
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantMsgId ? { ...m, content: fullContent } : m))
+        );
+      }
+
+      if (action) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantMsgId ? { ...m, pendingAction: action! } : m))
+        );
+        if (logEntryIdRef.current) {
+          onLogActionUpdate?.(logEntryIdRef.current, action);
         }
       }
 
@@ -220,38 +264,6 @@ export function ChatInterface({
           );
         }
       })();
-
-      // Parse proposed action if in build mode: primero el tool_call
-      // estructurado; si no vino, fallback al bloque ```json del texto.
-      if (mode === 'build') {
-        let action: ProposedAction | null = null;
-        const toolCall = Object.values(toolCallsAcc).find((tc) => tc.name === 'propose_action');
-        if (toolCall) {
-          try {
-            action = toProposedAction(JSON.parse(toolCall.arguments));
-          } catch {
-            action = null;
-          }
-        }
-        if (!action) action = parseProposedAction(fullContent);
-
-        // Si solo vino el tool_call sin texto, mostrar la descripción en la burbuja
-        if (action && !fullContent.trim()) {
-          fullContent = action.description;
-          setMessages((prev) =>
-            prev.map((m) => (m.id === assistantMsgId ? { ...m, content: fullContent } : m))
-          );
-        }
-
-        if (action) {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === assistantMsgId ? { ...m, pendingAction: action } : m))
-          );
-          if (logEntryIdRef.current) {
-            onLogActionUpdate?.(logEntryIdRef.current, action);
-          }
-        }
-      }
     } catch (err) {
       toast.error((err as Error).message);
       setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId));
@@ -314,6 +326,36 @@ export function ChatInterface({
     },
     [onLogActionUpdate]
   );
+
+  const revertAction = useCallback(async (msgId: string, logId: number) => {
+    setExecutingId(msgId);
+    try {
+      const res = await fetch('/api/ai/revert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ log_id: logId })
+      });
+      const result = await res.json();
+
+      if (!res.ok) throw new Error(result.error ?? 'No se pudo deshacer');
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId && m.pendingAction
+            ? { ...m, pendingAction: { ...m.pendingAction, status: 'reverted' } }
+            : m
+        )
+      );
+      toast.success(
+        `Deshecho — ${result.restored} ${result.restored === 1 ? 'fila restaurada' : 'filas restauradas'}` +
+          (result.removed > 0 ? `, ${result.removed} dadas de baja` : '')
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setExecutingId(null);
+    }
+  }, []);
 
   const rejectAction = useCallback((msgId: string) => {
     setMessages((prev) =>
@@ -405,6 +447,7 @@ export function ChatInterface({
             message={msg}
             onApproveAction={approveAction}
             onRejectAction={rejectAction}
+            onRevertAction={revertAction}
             executingId={executingId}
           />
         ))}

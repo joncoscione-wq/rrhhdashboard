@@ -23,10 +23,11 @@ type Props = {
   action: ProposedAction;
   onApprove: () => void;
   onReject: () => void;
+  onRevert: (logId: number) => void;
   isExecuting: boolean;
 };
 
-export function ActionPreview({ action, onApprove, onReject, isExecuting }: Props) {
+export function ActionPreview({ action, onApprove, onReject, onRevert, isExecuting }: Props) {
   const [showRecords, setShowRecords] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -38,14 +39,40 @@ export function ActionPreview({ action, onApprove, onReject, isExecuting }: Prop
     }
   };
 
-  if (action.status === 'executed') {
+  if (action.status === 'reverted') {
     return (
-      <div className='flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm dark:border-emerald-800 dark:bg-emerald-950/30'>
+      <div className='flex items-center gap-2 rounded-lg border px-3 py-2 text-sm text-muted-foreground'>
+        <Icons.undo className='h-4 w-4' />
+        <span>Acción deshecha — los datos volvieron a su estado anterior</span>
+      </div>
+    );
+  }
+
+  if (action.status === 'executed') {
+    const logId = action.result?.log_id;
+    return (
+      <div className='flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm dark:border-emerald-800 dark:bg-emerald-950/30'>
         <Icons.circleCheck className='h-4 w-4 text-emerald-600' />
         <span className='text-emerald-700 dark:text-emerald-300'>
           Ejecutado — {action.result?.affected}{' '}
           {action.result?.affected === 1 ? 'registro' : 'registros'} afectados
         </span>
+        {logId !== undefined && (
+          <Button
+            size='sm'
+            variant='ghost'
+            className='ml-auto h-6 text-xs'
+            onClick={() => onRevert(logId)}
+            disabled={isExecuting}
+          >
+            {isExecuting ? (
+              <Icons.spinner className='mr-1 h-3 w-3 animate-spin' />
+            ) : (
+              <Icons.undo className='mr-1 h-3 w-3' />
+            )}
+            Deshacer
+          </Button>
+        )}
       </div>
     );
   }
@@ -141,7 +168,7 @@ export function ActionPreview({ action, onApprove, onReject, isExecuting }: Prop
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
         title='⚠️ Acción de riesgo alto'
-        description={`${action.description} — Esta acción afecta la tabla "${action.table}" y no se puede deshacer automáticamente. Confirmá que revisaste los datos antes de ejecutarla.`}
+        description={`${action.description} — Esta acción afecta la tabla "${action.table}". Queda registrada con el estado previo, así que se puede deshacer, pero revisá los datos antes de ejecutarla.`}
         confirmLabel='Sí, ejecutar'
         onConfirm={() => {
           setConfirmOpen(false);

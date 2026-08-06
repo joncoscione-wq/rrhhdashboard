@@ -77,19 +77,21 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
     if (open) setForm(buildEmpty(anio));
   }, [open, anio]);
 
+  // Precarga los montos ya cargados para ese empleado/mes/moneda. La moneda es
+  // parte de la clave: un empleado puede tener sueldo en PESOS ARG y en USD el
+  // mismo mes, así que cambiar de moneda tiene que traer la otra fila.
   useEffect(() => {
     if (!form.empleado_id) return;
     const existente = sueldosDelAnio.find(
-      (s) => s.empleado_id === form.empleado_id && s.mes === form.mes
+      (s) => s.empleado_id === form.empleado_id && s.mes === form.mes && s.moneda === form.moneda
     );
     setForm((prev) => ({
       ...prev,
-      moneda: existente?.moneda ?? prev.moneda,
       monto: existente ? existente.monto : null,
       bono_anual: existente ? existente.bono_anual : null
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.empleado_id, form.mes, sueldosDelAnio]);
+  }, [form.empleado_id, form.mes, form.moneda, sueldosDelAnio]);
 
   const set = <K extends keyof SueldoInput>(key: K, value: SueldoInput[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -104,8 +106,9 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
       toast.error('Seleccioná un empleado');
       return;
     }
+    // Sin la moneda, el deshacer restauraba la fila de la otra moneda del mismo mes
     const existente = sueldosDelAnio.find(
-      (s) => s.empleado_id === form.empleado_id && s.mes === form.mes
+      (s) => s.empleado_id === form.empleado_id && s.mes === form.mes && s.moneda === form.moneda
     );
     setLoading(true);
     try {
@@ -124,7 +127,7 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
             bono_anual: existente.bono_anual
           });
         } else {
-          await deleteSueldoByKey(form.empleado_id, form.mes, form.anio);
+          await deleteSueldoByKey(form.empleado_id, form.mes, form.anio, form.moneda);
         }
         queryClient.invalidateQueries({ queryKey: ['payroll'] });
       });

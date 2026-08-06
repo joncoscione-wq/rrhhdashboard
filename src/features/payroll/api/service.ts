@@ -28,10 +28,13 @@ export async function getEmpleadosParaSueldo(): Promise<EmpleadoOption[]> {
   return (data ?? []) as EmpleadoOption[];
 }
 
+// La moneda es parte de la identidad del sueldo: un empleado puede cobrar en
+// PESOS ARG y en USD el mismo mes, y son dos filas distintas. Omitirla acá hacía
+// que cargar una moneda pisara la otra.
 export async function upsertSueldo(input: SueldoInput): Promise<void> {
   const { error } = await supabase
     .from('sueldos')
-    .upsert(input, { onConflict: 'empleado_id,mes,anio' });
+    .upsert(input, { onConflict: 'empleado_id,mes,anio,moneda' });
   if (error) throw new Error(error.message);
 }
 
@@ -43,8 +46,12 @@ export async function deleteSueldo(id: number): Promise<void> {
 export async function deleteSueldoByKey(
   empleado_id: number,
   mes: number,
-  anio: number
+  anio: number,
+  moneda: SueldoInput['moneda']
 ): Promise<void> {
-  const { error } = await supabase.from('sueldos').delete().match({ empleado_id, mes, anio });
+  const { error } = await supabase
+    .from('sueldos')
+    .delete()
+    .match({ empleado_id, mes, anio, moneda });
   if (error) throw new Error(error.message);
 }

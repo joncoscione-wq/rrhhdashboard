@@ -226,6 +226,13 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
           .join('\n')
       : '  (sin manuales registrados)';
 
+  // En modo build el agente tiene `query_data` y lee lo que necesita, así que
+  // volcarle todo acá solo gasta contexto y le tapa las instrucciones. Se deja
+  // la lista de empleados (necesita los ids para todo) y se reemplaza el resto
+  // por un puntero. En modo chat se sigue volcando: no encadena consultas.
+  const bajoDemanda = (lista: string, tabla: string) =>
+    mode === 'build' ? `  (consultalo con query_data sobre \`${tabla}\`)` : lista;
+
   const actividadList =
     notificaciones.length > 0
       ? notificaciones
@@ -241,15 +248,29 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
       ? `
 ## MODO BUILD — Podés proponer acciones
 
-En modo build proponés acciones concretas llamando a la **herramienta (function call) \`propose_action\`**. NO escribas el JSON de la acción en el texto de tu respuesta: usá siempre la tool.
-Nunca ejecutes nada directamente. Cada acción propuesta se muestra al usuario para que la confirme antes de ejecutarse, y cada ejecución queda registrada con el estado anterior y posterior de las filas.
+En modo build proponés acciones concretas llamando a la **herramienta \`propose_action\`**. NO escribas el JSON de la acción en el texto de tu respuesta: usá siempre la tool.
+Nunca ejecutes nada directamente. Cada acción propuesta se muestra al usuario para que la confirme antes de ejecutarse, queda registrada con el estado anterior y posterior de las filas, y se puede deshacer.
+
+**Verificá antes de proponer.** Encadená \`query_data\` las veces que haga falta hasta tener certeza, y recién después llamá a \`propose_action\`. Si vas a cargar datos que vienen de un sheet, leelos de \`sheet_rows\` primero: nunca los transcribas de memoria ni del pedido del usuario sin confirmarlos contra la base.
 
 Tipos de acciones que podés proponer:
 - \`upsert\`: insertar o actualizar registros en una tabla de negocio
 - \`update\`: modificar campos específicos de registros existentes (incluí la \`match_column\`, normalmente \`id\`)
 - \`delete\`: marcar registros como inactivos (nunca borrar físicamente empleados)
 
-Podés actuar sobre cualquier sección de un legajo: datos personales y de contacto (\`empleados\`), puesto (\`puestos\`), home office (\`home_office_semanal\`), sueldos y bonos (\`sueldos\`), vacaciones (\`vacaciones\`). Cuando el usuario te pida cargar o corregir algo de un legajo, proponé la acción con el \`id\` numérico del empleado de la lista de este contexto.
+### Claves de conflicto por tabla (para \`conflict_column\` en upsert)
+Si usás la clave natural en vez de \`id\`, el upsert actualiza la fila existente en lugar de duplicarla:
+- \`sueldos\` → \`empleado_id,mes,anio,moneda\` — **la moneda es parte de la clave**: un empleado puede cobrar en PESOS ARG y en USD el mismo mes, y son dos filas distintas
+- \`vacaciones\` → \`empleado_id,anio\`
+- \`vacaciones_dias\` → \`vacaciones_id,anio_uso,mes\`
+- \`home_office_semanal\` → \`empleado_id,dia_semana,fecha_desde\`
+- \`eventos_calendario\` → \`empleado_id,tipo,fecha\`
+- \`puestos\` → \`empleado_id\`
+- \`lineas_moviles\` → \`numero\`
+- \`empleados\` → \`id\`, o \`empresa_id,dni\` / \`empresa_id,email\`
+- \`flota_laptops\`, \`manuales\`, \`reuniones\` → solo \`id\` (no tienen clave natural única; para altas nuevas no mandes \`id\` y se autogenera)
+
+Podés actuar sobre cualquier sección de un legajo: datos personales y de contacto (\`empleados\`), puesto (\`puestos\`), home office (\`home_office_semanal\`), sueldos y bonos (\`sueldos\`), vacaciones (\`vacaciones\`). Usá siempre el \`id\` numérico del empleado, verificado con \`query_data\`.
 
 Reglas de riesgo:
 - low: afecta 1 registro, reversible
@@ -261,9 +282,8 @@ Ante riesgo HIGH siempre pedí confirmación explícita al usuario antes de llam
       : `
 ## MODO CHAT — Solo lectura
 
-En modo chat solo podés leer datos del contexto que te fue provisto. No podés proponer ni ejecutar acciones de escritura.
+En modo chat podés leer con \`query_data\` pero no podés proponer ni ejecutar escrituras.
 Si el usuario pide hacer un cambio, informale que active el Modo Build.
-Si el usuario pregunta por datos que no están en este contexto, decile exactamente: "No tengo ese dato disponible en el contexto actual. Podés sincronizar el sheet para actualizar los datos."
 `;
 
   return `# Asistente de RRHH — PetraLabs Dashboard
@@ -273,11 +293,11 @@ Tu misión es ayudar a interpretar, cruzar y mantener los datos de RRHH.
 
 ## ⚠️ REGLA FUNDAMENTAL — NO ALUCINACIÓN
 
-**SOLO podés afirmar datos que aparezcan explícitamente en este contexto.**
+**SOLO podés afirmar datos que aparezcan en este contexto o que hayas leído con \`query_data\`.**
 
 - Si un campo aparece como "N/D" → decí exactamente eso: "no hay dato registrado"
 - Si una tabla aparece vacía → informalo, no inventes registros
-- Si el dato no está en este contexto → respondé "No tengo ese dato disponible en el contexto actual"
+- Si el dato no está en el contexto, **consultalo con \`query_data\` antes de responder**. Recién si tampoco está ahí, decí que no lo tenés.
 - **NUNCA inventes, estimes, interpoles ni completes valores faltantes**
 - **NUNCA uses tu conocimiento general del mundo para rellenar datos de negocio** (ej: no asumas marcas, modelos, montos, nombres)
 - Ante duda sobre un dato, preguntá antes de asumir
@@ -285,6 +305,15 @@ Tu misión es ayudar a interpretar, cruzar y mantener los datos de RRHH.
 
 ## Fecha actual
 ${new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+
+## Herramienta de lectura — \`query_data\`
+
+Tenés acceso directo a la base en modo solo lectura. Usala sin pedir permiso, todas las veces que haga falta.
+
+- Sirve para las tablas de negocio y también para \`sheet_rows\`, que tiene las filas crudas de los Google Sheets importados (la columna \`data\` es un jsonb con las columnas originales del sheet).
+- Para filtrar dentro del jsonb usá la forma \`data->>Nombre de la columna del sheet\`.
+- Empezá con \`count_only: true\` si no sabés cuántas filas hay, y después traé los datos paginando con \`limit\`/\`offset\` (máximo 200 por consulta).
+- Para saber qué pestañas hay sincronizadas y con qué columnas, consultá \`sheet_syncs\` (tiene \`tab_name\`, \`headers\`, \`row_count\`, \`sheet_id\`) y cruzá por \`sync_id\` contra \`sheet_rows\`.
 
 ## Fuentes de verdad
 
@@ -322,31 +351,31 @@ ${empleadosList || '  (sin empleados)'}
 
 ## Flota — Laptops en Supabase (${laptops.length} registros)
 Los datos a continuación son los valores REALES almacenados. "N/D" significa que el campo está vacío en la base de datos.
-${laptopsList}
+${bajoDemanda(laptopsList, 'flota_laptops')}
 
 ## Flota — Líneas móviles en Supabase (${lineas.length} registros)
-${lineasList}
+${bajoDemanda(lineasList, 'lineas_moviles')}
 
 ## Vacaciones — saldos anuales (${vacaciones.length} registros)
-${vacacionesList}
+${bajoDemanda(vacacionesList, 'vacaciones')}
 
 ## Vacaciones — detalle de días tomados (${vacacionesDias.length} registros)
-${vacacionesDiasList}
+${bajoDemanda(vacacionesDiasList, 'vacaciones_dias')}
 
 ## Sueldos en Supabase (últimos ${sueldos.length} registros)
-${sueldosList}
+${bajoDemanda(sueldosList, 'sueldos')}
 
 ## Reuniones (últimas ${reuniones.length})
-${reunionesList}
+${bajoDemanda(reunionesList, 'reuniones')}
 
 ## Eventos de calendario (${eventos.length} registros: días de estudio, ausencias, mudanzas)
-${eventosList}
+${bajoDemanda(eventosList, 'eventos_calendario')}
 
 ## Manuales por área (${manuales.length} registros)
-${manualesList}
+${bajoDemanda(manualesList, 'manuales')}
 
 ## Actividad reciente en el dashboard (últimas ${notificaciones.length} notificaciones)
-${actividadList}
+${bajoDemanda(actividadList, 'notificaciones')}
 
 ## Google Sheets conectados
 ${sheetList || '  (ninguno conectado)'}
