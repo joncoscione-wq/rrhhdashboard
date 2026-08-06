@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Icons } from '@/components/icons';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { toast } from 'sonner';
 import { ActionPreview } from './action-preview';
 import type {
@@ -94,6 +95,80 @@ function MessageBubble({
           {message.timestamp.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Barra fija sobre el input mientras hay una acción esperando confirmación.
+ *
+ * La tarjeta de la acción vive dentro del mensaje, así que en cuanto el chat
+ * scrollea queda arriba y fuera de vista: el usuario escribe otra cosa sin
+ * darse cuenta de que dejó una acción sin confirmar. Esta barra la mantiene
+ * siempre a mano.
+ */
+function PendingActionBar({
+  action,
+  onConfirm,
+  onReject,
+  isExecuting
+}: {
+  action: ProposedAction;
+  onConfirm: () => void;
+  onReject: () => void;
+  isExecuting: boolean;
+}) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const esAlto = action.risk === 'high';
+
+  return (
+    <div className='flex items-center gap-2 border-t bg-primary/5 px-4 py-2'>
+      <Icons.sparkles className='h-4 w-4 shrink-0 text-primary' />
+      <div className='min-w-0 flex-1'>
+        <p className='truncate text-xs font-medium'>{action.description}</p>
+        <p className='text-[10px] text-muted-foreground'>
+          {action.kind === 'operation' || action.type === 'operation'
+            ? `⚙ ${action.operation}`
+            : `${action.type} → ${action.table}`}
+          {esAlto && ' · ⚠️ riesgo alto'}
+        </p>
+      </div>
+      <Button
+        size='sm'
+        className='h-8 shrink-0 text-xs'
+        onClick={() => (esAlto ? setConfirmOpen(true) : onConfirm())}
+        disabled={isExecuting}
+      >
+        {isExecuting ? (
+          <Icons.spinner className='mr-1 h-3.5 w-3.5 animate-spin' />
+        ) : (
+          <Icons.circleCheck className='mr-1 h-3.5 w-3.5' />
+        )}
+        Confirmar
+      </Button>
+      <Button
+        size='sm'
+        variant='ghost'
+        className='h-8 shrink-0 text-xs'
+        onClick={onReject}
+        disabled={isExecuting}
+      >
+        Rechazar
+      </Button>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title='⚠️ Acción de riesgo alto'
+        description={`${action.description} — Esta acción afecta la tabla "${action.table}". Queda registrada con el estado previo, así que se puede deshacer, pero revisá los datos antes de ejecutarla.`}
+        confirmLabel='Sí, ejecutar'
+        onConfirm={() => {
+          setConfirmOpen(false);
+          onConfirm();
+        }}
+        loading={isExecuting}
+        destructive
+      />
     </div>
   );
 }
@@ -367,6 +442,14 @@ export function ChatInterface({
     );
   }, []);
 
+  // Última acción sin resolver: es la que gobierna la barra fija y Ctrl+Enter.
+  const pendiente = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].pendingAction?.status === 'pending') return messages[i];
+    }
+    return undefined;
+  }, [messages]);
+
   return (
     <div className='flex h-full flex-col'>
       {/* Header */}
@@ -467,6 +550,16 @@ export function ChatInterface({
         <div ref={bottomRef} />
       </div>
 
+      {/* Acción esperando confirmación */}
+      {pendiente?.pendingAction && (
+        <PendingActionBar
+          action={pendiente.pendingAction}
+          onConfirm={() => approveAction(pendiente.id, pendiente.pendingAction!)}
+          onReject={() => rejectAction(pendiente.id)}
+          isExecuting={executingId === pendiente.id}
+        />
+      )}
+
       {/* Input */}
       <div className='border-t px-4 py-3'>
         <div className='flex gap-2 items-end'>
@@ -475,6 +568,15 @@ export function ChatInterface({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
+              // Ctrl/Cmd+Enter confirma la acción pendiente sin tener que
+              // scrollear hasta la tarjeta ni sacar la mano del teclado.
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                if (pendiente?.pendingAction && pendiente.pendingAction.risk !== 'high') {
+                  e.preventDefault();
+                  approveAction(pendiente.id, pendiente.pendingAction);
+                }
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
@@ -504,6 +606,9 @@ export function ChatInterface({
         </div>
         <p className='mt-1.5 text-[10px] text-muted-foreground/60 text-center'>
           Enter para enviar · Shift+Enter para nueva línea
+          {pendiente?.pendingAction && pendiente.pendingAction.risk !== 'high'
+            ? ' · Ctrl+Enter para confirmar'
+            : ''}
         </p>
       </div>
     </div>

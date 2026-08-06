@@ -6,6 +6,13 @@ import {
   type QueryDataArgs
 } from '@/features/ai-assistant/lib/read-tools';
 import { PROPOSE_OPERATION_TOOL, OPERATIONS } from '@/features/ai-assistant/lib/operations';
+import {
+  REMEMBER_TOOL,
+  FORGET_TOOL,
+  runRemember,
+  runForget
+} from '@/features/ai-assistant/lib/memory-tool';
+import { compactHistory } from '@/features/ai-assistant/lib/compact-history';
 import type { ChatRequest, ProposedAction } from '@/features/ai-assistant/api/types';
 
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
@@ -176,16 +183,22 @@ export async function POST(request: Request) {
   }
 
   const systemPrompt = await buildSystemPrompt(mode ?? 'chat');
+
+  // El historial largo se colapsa antes de mandarlo: ver compact-history.ts.
+  const { messages: historial, compactados } = compactHistory(messages);
+
   console.warn(
-    `[ai/chat] system prompt: ${systemPrompt.length} chars (~${Math.round(systemPrompt.length / 3.5)} tokens) | mode=${mode ?? 'chat'} | historial=${messages.length} mensajes`
+    `[ai/chat] system prompt: ${systemPrompt.length} chars (~${Math.round(systemPrompt.length / 3.5)} tokens) | mode=${mode ?? 'chat'} | historial=${messages.length} mensajes` +
+      (compactados > 0 ? ` (${compactados} compactados)` : '')
   );
 
-  // En ambos modos el agente puede LEER. Lo que cambia es si puede proponer
-  // escrituras: eso sigue siendo exclusivo de build, y siempre con confirmación.
+  // En ambos modos el agente puede LEER y recordar. Lo que cambia es si puede
+  // proponer escrituras de negocio: eso sigue siendo exclusivo de build, y
+  // siempre con confirmación del usuario.
   const tools =
     mode === 'build'
-      ? [QUERY_DATA_TOOL, PROPOSE_ACTION_TOOL, PROPOSE_OPERATION_TOOL]
-      : [QUERY_DATA_TOOL];
+      ? [QUERY_DATA_TOOL, PROPOSE_ACTION_TOOL, PROPOSE_OPERATION_TOOL, REMEMBER_TOOL, FORGET_TOOL]
+      : [QUERY_DATA_TOOL, REMEMBER_TOOL, FORGET_TOOL];
 
   const encoder = new TextEncoder();
 
@@ -197,7 +210,7 @@ export async function POST(request: Request) {
 
       const convo: ChatCompletionMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...messages.map((m) => ({ role: m.role, content: m.content }))
+        ...historial.map((m) => ({ role: m.role, content: m.content }))
       ];
 
       try {
@@ -263,21 +276,12 @@ export async function POST(request: Request) {
             break;
           }
 
-          // Solo quedaron lecturas: se ejecutan y el resultado vuelve al modelo
-          // para que siga razonando en el próximo paso.
+          // Solo quedaron lecturas y memoria: se ejecutan y el resultado vuelve
+          // al modelo para que siga razonando en el próximo paso.
           for (const tc of toolCalls) {
-            if (tc.name !== 'query_data') {
-              convo.push({
-                role: 'tool',
-                tool_call_id: tc.id,
-                content: `Herramienta desconocida: ${tc.name}`
-              });
-              continue;
-            }
-
-            let args: QueryDataArgs;
+            let args: Record<string, unknown>;
             try {
-              args = JSON.parse(tc.arguments) as QueryDataArgs;
+              args = JSON.parse(tc.arguments) as Record<string, unknown>;
             } catch {
               convo.push({
                 role: 'tool',
@@ -287,8 +291,29 @@ export async function POST(request: Request) {
               continue;
             }
 
-            const result = await runQueryData(args);
-            const resumen = resumenLectura(args, result);
+            if (tc.name === 'remember' || tc.name === 'forget') {
+              const res =
+                tc.name === 'remember'
+                  ? await runRemember(args as { key?: string; value?: unknown })
+                  : await runForget(args as { key?: string });
+              console.warn(`[ai/chat] ${tc.name} → ${res.summary}`);
+              emit({ t: 'tool', name: tc.name, summary: `memoria — ${res.summary}` });
+              convo.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(res) });
+              continue;
+            }
+
+            if (tc.name !== 'query_data') {
+              convo.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                content: `Herramienta desconocida: ${tc.name}`
+              });
+              continue;
+            }
+
+            const queryArgs = args as unknown as QueryDataArgs;
+            const result = await runQueryData(queryArgs);
+            const resumen = resumenLectura(queryArgs, result);
             console.warn(`[ai/chat] query_data → ${resumen}`);
             emit({ t: 'tool', name: 'query_data', summary: resumen });
 

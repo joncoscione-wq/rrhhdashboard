@@ -163,24 +163,27 @@ export function ActionPreview({ action, onApprove, onReject, onRevert, isExecuti
         </>
       )}
 
-      <div className='flex gap-2 pt-1'>
-        <Button size='sm' className='h-7 text-xs' onClick={handleEjecutar} disabled={isExecuting}>
+      <div className='flex items-center gap-2 pt-1'>
+        <Button size='sm' className='h-8 text-xs' onClick={handleEjecutar} disabled={isExecuting}>
           {isExecuting ? (
-            <Icons.spinner className='mr-1 h-3 w-3 animate-spin' />
+            <Icons.spinner className='mr-1 h-3.5 w-3.5 animate-spin' />
           ) : (
-            <Icons.circleCheck className='mr-1 h-3 w-3' />
+            <Icons.circleCheck className='mr-1 h-3.5 w-3.5' />
           )}
-          Ejecutar
+          Confirmar
         </Button>
         <Button
           size='sm'
           variant='outline'
-          className='h-7 text-xs'
+          className='h-8 text-xs'
           onClick={onReject}
           disabled={isExecuting}
         >
           Rechazar
         </Button>
+        <kbd className='ml-auto hidden rounded border bg-background/60 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline'>
+          Ctrl+Enter
+        </kbd>
       </div>
 
       <ConfirmDialog
