@@ -48,3 +48,31 @@ export type HomeOfficeDia = {
 export type EmpleadoDetalle = Empleado & {
   home_office: HomeOfficeDia[];
 };
+
+export type CreateEmpleadoInput = {
+  empresa_id: number;
+  nombre_apellido: string;
+  dni: string | null;
+  fecha_nacimiento: string | null;
+  celular: string | null;
+  email: string | null;
+  direccion: string | null;
+  movilidad: string | null;
+  equipo_ingreso: string | null;
+  fecha_ingreso: string | null;
+  modalidad: 'presencial' | 'home_office' | 'hibrido' | 'n/a';
+  contacto_emergencia: string | null;
+  puesto: string | null;
+};
+
+export type VersionInfo = {
+  id: string;
+  entidad_tabla: string;
+  entidad_id: number;
+  version: number;
+  snapshot: Record<string, unknown>;
+  cambios: Record<string, { anterior: unknown; nuevo: unknown }>;
+  usuario: string;
+  operacion: 'creacion' | 'actualizacion' | 'eliminacion' | 'restauracion';
+  created_at: string;
+};

@@ -46,7 +46,9 @@ function buildEmpty(anio: number): SueldoInput {
     mes: new Date().getMonth() + 1,
     anio,
     monto: null,
-    bono_anual: null
+    bono_anual: null,
+    tipo_concepto: 'sueldo',
+    semestre: null
   };
 }
 
@@ -83,7 +85,11 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
   useEffect(() => {
     if (!form.empleado_id) return;
     const existente = sueldosDelAnio.find(
-      (s) => s.empleado_id === form.empleado_id && s.mes === form.mes && s.moneda === form.moneda
+      (s) =>
+        s.empleado_id === form.empleado_id &&
+        s.mes === form.mes &&
+        s.moneda === form.moneda &&
+        s.tipo_concepto === form.tipo_concepto
     );
     setForm((prev) => ({
       ...prev,
@@ -91,7 +97,7 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
       bono_anual: existente ? existente.bono_anual : null
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.empleado_id, form.mes, form.moneda, sueldosDelAnio]);
+  }, [form.empleado_id, form.mes, form.moneda, form.tipo_concepto, sueldosDelAnio]);
 
   const set = <K extends keyof SueldoInput>(key: K, value: SueldoInput[K]) =>
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -108,7 +114,11 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
     }
     // Sin la moneda, el deshacer restauraba la fila de la otra moneda del mismo mes
     const existente = sueldosDelAnio.find(
-      (s) => s.empleado_id === form.empleado_id && s.mes === form.mes && s.moneda === form.moneda
+      (s) =>
+        s.empleado_id === form.empleado_id &&
+        s.mes === form.mes &&
+        s.moneda === form.moneda &&
+        s.tipo_concepto === form.tipo_concepto
     );
     setLoading(true);
     try {
@@ -124,7 +134,9 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
             mes: existente.mes,
             anio: existente.anio,
             monto: existente.monto,
-            bono_anual: existente.bono_anual
+            bono_anual: existente.bono_anual,
+            tipo_concepto: existente.tipo_concepto ?? 'sueldo',
+            semestre: existente.semestre ?? null
           });
         } else {
           await deleteSueldoByKey(form.empleado_id, form.mes, form.anio, form.moneda);
@@ -163,18 +175,37 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
           </div>
 
           <div className='space-y-1.5'>
-            <Label className='text-xs'>Mes</Label>
-            <select
-              value={form.mes}
-              onChange={(e) => set('mes', Number(e.target.value))}
-              className='h-8 w-full rounded-md border bg-background px-2 text-xs'
-            >
-              {MESES.map((m, i) => (
-                <option key={m} value={i + 1}>
-                  {m}
-                </option>
-              ))}
-            </select>
+            <Label className='text-xs'>
+              {form.tipo_concepto === 'aguinaldo' ? 'Semestre' : 'Mes'}
+            </Label>
+            {form.tipo_concepto === 'aguinaldo' ? (
+              <select
+                value={form.semestre ?? 1}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    semestre: Number(e.target.value),
+                    mes: Number(e.target.value) === 1 ? 6 : 12
+                  }))
+                }
+                className='h-8 w-full rounded-md border bg-background px-2 text-xs'
+              >
+                <option value={1}>1er Semestre</option>
+                <option value={2}>2do Semestre</option>
+              </select>
+            ) : (
+              <select
+                value={form.mes}
+                onChange={(e) => set('mes', Number(e.target.value))}
+                className='h-8 w-full rounded-md border bg-background px-2 text-xs'
+              >
+                {MESES.map((m, i) => (
+                  <option key={m} value={i + 1}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div className='space-y-1.5'>
             <Label className='text-xs'>Año</Label>
@@ -184,6 +215,27 @@ export function SueldoDialog({ open, onOpenChange, anio }: SueldoDialogProps) {
               onChange={(e) => set('anio', Number(e.target.value))}
               className='h-8 text-xs'
             />
+          </div>
+
+          <div className='space-y-1.5'>
+            <Label className='text-xs'>Tipo</Label>
+            <select
+              value={form.tipo_concepto}
+              onChange={(e) => {
+                const tipo = e.target.value as SueldoInput['tipo_concepto'];
+                setForm((prev) => ({
+                  ...prev,
+                  tipo_concepto: tipo,
+                  semestre: tipo === 'aguinaldo' ? 1 : null,
+                  mes: tipo === 'aguinaldo' ? 6 : prev.mes
+                }));
+              }}
+              className='h-8 w-full rounded-md border bg-background px-2 text-xs'
+            >
+              <option value='sueldo'>Sueldo</option>
+              <option value='bono'>Bono</option>
+              <option value='aguinaldo'>Aguinaldo</option>
+            </select>
           </div>
 
           <div className='space-y-1.5'>

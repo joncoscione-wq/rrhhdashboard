@@ -34,7 +34,7 @@ export async function getEmpleadosParaSueldo(): Promise<EmpleadoOption[]> {
 export async function upsertSueldo(input: SueldoInput): Promise<void> {
   const { error } = await supabase
     .from('sueldos')
-    .upsert(input, { onConflict: 'empleado_id,mes,anio,moneda' });
+    .upsert(input, { onConflict: 'empleado_id,mes,anio,moneda,tipo_concepto' });
   if (error) throw new Error(error.message);
 }
 

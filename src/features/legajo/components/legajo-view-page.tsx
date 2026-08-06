@@ -19,6 +19,7 @@ import { SectionEmail } from './sections/section-email';
 import { SectionDireccion } from './sections/section-direccion';
 import { SectionMovilidad } from './sections/section-movilidad';
 import { SectionDatosLaborales } from './sections/section-datos-laborales';
+import { VersionTimeline } from './version-timeline';
 
 function initials(nombre: string): string {
   return nombre
@@ -115,6 +116,13 @@ export default function LegajoViewPage({ empleadoId }: { empleadoId: string }) {
           <Suspense fallback={<DocumentosTableSkeleton />}>
             <DocumentosTable empleadoId={id} />
           </Suspense>
+        </div>
+      </div>
+
+      <div className='grid gap-4 md:grid-cols-1'>
+        <div className='space-y-3'>
+          <h4 className='text-sm font-semibold'>Historial de Versiones</h4>
+          <VersionTimeline entidadTabla='empleados' entidadId={id} />
         </div>
       </div>
     </div>

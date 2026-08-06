@@ -5,7 +5,9 @@ import type {
   EmpleadosFilters,
   EmpleadosResponse,
   ContactoEmergencia,
-  HomeOfficeDia
+  HomeOfficeDia,
+  CreateEmpleadoInput,
+  VersionInfo
 } from './types';
 
 export async function getEmpleados(filters: EmpleadosFilters = {}): Promise<EmpleadosResponse> {
@@ -196,5 +198,60 @@ export async function setEmpleadoActivo(id: number, activo: boolean) {
 // CASCADE: se pierde todo el historial del legajo. Solo con confirmación.
 export async function deleteEmpleado(id: number) {
   const { error } = await supabase.from('empleados').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+export async function createEmpleado(input: CreateEmpleadoInput) {
+  const { data, error } = await supabase
+    .from('empleados')
+    .insert({
+      empresa_id: input.empresa_id,
+      nombre_apellido: input.nombre_apellido,
+      dni: input.dni,
+      fecha_nacimiento: input.fecha_nacimiento,
+      celular: input.celular,
+      email: input.email,
+      direccion: input.direccion,
+      movilidad: input.movilidad,
+      equipo_ingreso: input.equipo_ingreso,
+      fecha_ingreso: input.fecha_ingreso,
+      modalidad: input.modalidad,
+      contacto_emergencia: input.contacto_emergencia,
+      activo: true
+    })
+    .select('id')
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  if (input.puesto) {
+    await upsertPuesto(data.id, input.puesto);
+  }
+
+  return data.id;
+}
+
+export async function getVersiones(
+  entidadTabla: string,
+  entidadId: number
+): Promise<VersionInfo[]> {
+  const { data, error } = await supabase
+    .from('registro_versiones')
+    .select('*')
+    .eq('entidad_tabla', entidadTabla)
+    .eq('entidad_id', entidadId)
+    .order('version', { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as VersionInfo[];
+}
+
+export async function restaurarVersion(entidadTabla: string, entidadId: number, version: number) {
+  const { error } = await supabase.rpc('restaurar_version', {
+    p_entidad_tabla: entidadTabla,
+    p_entidad_id: entidadId,
+    p_version: version
+  });
+
   if (error) throw new Error(error.message);
 }

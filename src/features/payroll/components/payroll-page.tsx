@@ -19,7 +19,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { getSueldosByAnio, getAniosDisponibles } from '@/features/payroll/api/service';
-import type { Sueldo, SueldosPorEmpleado } from '@/features/payroll/api/types';
+import type { Sueldo, SueldosPorEmpleado, AguinaldoRow } from '@/features/payroll/api/types';
 import { SueldoDialog } from './sueldo-dialog';
 import { SheetsImportButton } from '@/features/sheets/components/sheets-import-button';
 
@@ -70,6 +70,30 @@ function buildBonos(sueldos: Sueldo[]): BonosSection[] {
     sections.push({ moneda, bonos, total });
   }
   return sections;
+}
+
+function buildAguinaldos(sueldos: Sueldo[]): {
+  filas: AguinaldoRow[];
+  totalARS: number;
+  totalUSD: number;
+} {
+  const filas: AguinaldoRow[] = [];
+  for (const s of sueldos) {
+    if (s.tipo_concepto !== 'aguinaldo' || s.monto === null || s.monto === 0) continue;
+    const nombre = s.empleados?.nombre_apellido ?? `ID ${s.empleado_id}`;
+    filas.push({
+      nombre_apellido: nombre,
+      semestre: s.semestre ?? 1,
+      monto: s.monto,
+      moneda: s.moneda
+    });
+  }
+  filas.sort((a, b) => a.nombre_apellido.localeCompare(b.nombre_apellido));
+  const totalARS = filas
+    .filter((r) => r.moneda === 'PESOS ARG')
+    .reduce((acc, r) => acc + r.monto, 0);
+  const totalUSD = filas.filter((r) => r.moneda === 'USD').reduce((acc, r) => acc + r.monto, 0);
+  return { filas, totalARS, totalUSD };
 }
 
 function SueldoTable({
@@ -181,6 +205,82 @@ function BonosTable({ sections }: { sections: BonosSection[] }) {
   );
 }
 
+function AguinaldoTable({
+  filas,
+  totalARS,
+  totalUSD
+}: {
+  filas: AguinaldoRow[];
+  totalARS: number;
+  totalUSD: number;
+}) {
+  return (
+    <div className='overflow-x-auto'>
+      <table className='w-full text-sm'>
+        <thead>
+          <tr className='border-b'>
+            <th className='px-4 py-2 text-left font-medium text-muted-foreground min-w-[200px]'>
+              Empleado
+            </th>
+            <th className='px-4 py-2 text-right font-medium text-muted-foreground min-w-[100px]'>
+              Semestre
+            </th>
+            <th className='px-4 py-2 text-right font-medium text-muted-foreground min-w-[120px]'>
+              Monto
+            </th>
+            <th className='px-4 py-2 text-right font-medium text-muted-foreground min-w-[80px]'>
+              Moneda
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((r) => (
+            <tr
+              key={`${r.nombre_apellido}-${r.semestre}-${r.moneda}`}
+              className='border-b last:border-0 hover:bg-muted/30'
+            >
+              <td className='px-4 py-2 font-medium'>{r.nombre_apellido}</td>
+              <td className='px-4 py-2 text-right tabular-nums'>
+                <Badge variant='outline' className='text-xs'>
+                  {r.semestre}° Sem.
+                </Badge>
+              </td>
+              <td className='px-4 py-2 text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400'>
+                {formatMonto(r.monto, r.moneda)}
+              </td>
+              <td className='px-4 py-2 text-right tabular-nums text-muted-foreground'>
+                {r.moneda === 'PESOS ARG' ? 'ARS' : 'USD'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          {totalARS > 0 && (
+            <tr className='border-t font-semibold'>
+              <td className='px-4 py-2'>Total ARS</td>
+              <td />
+              <td className='px-4 py-2 text-right tabular-nums text-emerald-600 dark:text-emerald-400'>
+                {formatMonto(totalARS, 'PESOS ARG')}
+              </td>
+              <td className='px-4 py-2 text-right text-muted-foreground'>ARS</td>
+            </tr>
+          )}
+          {totalUSD > 0 && (
+            <tr className='border-t font-semibold'>
+              <td className='px-4 py-2'>Total USD</td>
+              <td />
+              <td className='px-4 py-2 text-right tabular-nums text-emerald-600 dark:text-emerald-400'>
+                {formatMonto(totalUSD, 'USD')}
+              </td>
+              <td className='px-4 py-2 text-right text-muted-foreground'>USD</td>
+            </tr>
+          )}
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 export function PayrollPage() {
   const [anio, setAnio] = useState<number>(2025);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -198,6 +298,11 @@ export function PayrollPage() {
   const pesos = buildPivot(sueldos, 'PESOS ARG');
   const usd = buildPivot(sueldos, 'USD');
   const bonosSections = buildBonos(sueldos);
+  const {
+    filas: aguinaldoFilas,
+    totalARS: totalAguinaldoARS,
+    totalUSD: totalAguinaldoUSD
+  } = buildAguinaldos(sueldos);
 
   return (
     <div className='space-y-4'>
@@ -233,7 +338,7 @@ export function PayrollPage() {
       ) : sueldos.length === 0 ? (
         <p className='text-muted-foreground text-sm italic'>Sin datos para {anio}.</p>
       ) : (
-        <Accordion type='multiple' defaultValue={['bonos']}>
+        <Accordion type='multiple' defaultValue={['bonos', 'aguinaldos']}>
           {pesos.length > 0 && (
             <AccordionItem value='pesos' className='border rounded-lg mb-3'>
               <AccordionTrigger className='px-4 py-3 hover:bg-muted/30 hover:no-underline rounded-t-lg [&[data-state=open]]:rounded-b-none [&[data-state=open]]:border-b'>
@@ -267,7 +372,7 @@ export function PayrollPage() {
           )}
 
           {bonosSections.length > 0 && (
-            <AccordionItem value='bonos' className='border rounded-lg'>
+            <AccordionItem value='bonos' className='border rounded-lg mb-3'>
               <AccordionTrigger className='px-4 py-3 hover:bg-muted/30 hover:no-underline rounded-t-lg [&[data-state=open]]:rounded-b-none [&[data-state=open]]:border-b'>
                 <div className='flex items-center gap-3'>
                   <span className='text-base font-semibold'>Bonos Anuales</span>
@@ -281,6 +386,29 @@ export function PayrollPage() {
               </AccordionTrigger>
               <AccordionContent className='p-0'>
                 <BonosTable sections={bonosSections} />
+              </AccordionContent>
+            </AccordionItem>
+          )}
+
+          {aguinaldoFilas.length > 0 && (
+            <AccordionItem value='aguinaldos' className='border rounded-lg'>
+              <AccordionTrigger className='px-4 py-3 hover:bg-muted/30 hover:no-underline rounded-t-lg [&[data-state=open]]:rounded-b-none [&[data-state=open]]:border-b'>
+                <div className='flex items-center gap-3'>
+                  <span className='text-base font-semibold'>Aguinaldos (SAC)</span>
+                  <Badge
+                    variant='secondary'
+                    className='text-xs bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                  >
+                    {aguinaldoFilas.length} registros
+                  </Badge>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className='p-0'>
+                <AguinaldoTable
+                  filas={aguinaldoFilas}
+                  totalARS={totalAguinaldoARS}
+                  totalUSD={totalAguinaldoUSD}
+                />
               </AccordionContent>
             </AccordionItem>
           )}

@@ -623,6 +623,146 @@ Cada fase es independiente y deployable. No es necesario completar todas para te
 
 ---
 
+## Modificaciones adicionales al alcance (obligatorio)
+
+Las siguientes funcionalidades complementan la especificación original y forman parte de los requisitos de la nueva versión del dashboard.
+
+### 1. Sistema de Versionado e Historial Cronológico
+
+La auditoría de cambios y la función "Deshacer" no son suficientes para garantizar la trazabilidad y recuperación completa de la información. Se debe implementar un **Sistema de Versionado** para todas las entidades del sistema (empleados, legajos, celulares, laptops, documentos, sueldos, eventos, etc.).
+
+#### Requisitos
+
+Cada modificación realizada sobre un registro debe generar automáticamente una nueva versión. Cada versión debe conservar:
+
+- Fecha y hora.
+- Usuario que realizó el cambio (o Asistente IA).
+- Estado completo del registro en ese momento (snapshot).
+- Detalle de los cambios realizados respecto de la versión anterior.
+
+Cada ficha debe incorporar una nueva pestaña o sección denominada **Timeline** o **Historial de Versiones**, desde la cual será posible:
+
+- Visualizar cronológicamente todas las modificaciones.
+- Consultar quién realizó cada cambio.
+- Comparar cualquier versión con otra o con la versión actual.
+- Visualizar claramente los valores anteriores y posteriores.
+- Restaurar cualquier versión anterior con una única acción y confirmación del usuario.
+
+La restauración de una versión también debe generar una nueva versión en el historial, preservando completamente la trazabilidad.
+
+Este historial es independiente del log global de auditoría y debe existir para cada registro individual.
+
+#### Migración sugerida
+
+```sql
+CREATE TABLE IF NOT EXISTS registro_versiones (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  entidad_tabla text NOT NULL,        -- 'empleados', 'sueldos', 'laptops', etc.
+  entidad_id uuid NOT NULL,           -- ID del registro afectado
+  version integer NOT NULL,           -- Número de versión (auto-incremental por entidad)
+  snapshot jsonb NOT NULL,            -- Estado completo del registro en ese momento
+  cambios jsonb NOT NULL,             -- { campo: { anterior: X, nuevo: Y }, ... }
+  usuario text NOT NULL,              -- Usuario o 'Asistente IA'
+  operacion text NOT NULL,            -- 'creacion', 'actualizacion', 'eliminacion', 'restauracion'
+  created_at timestamptz DEFAULT now(),
+
+  UNIQUE(entidad_tabla, entidad_id, version)
+);
+
+ALTER TABLE registro_versiones ENABLE ROW LEVEL SECURITY;
+CREATE POLICY registro_versiones_all ON registro_versiones FOR ALL USING (true);
+
+-- Índice para consultar historial por entidad
+CREATE INDEX idx_versiones_entidad ON registro_versiones(entidad_tabla, entidad_id, version DESC);
+```
+
+#### Integración con el flujo de mutaciones
+
+Cada `UPDATE` o `DELETE` en una entidad debe estar envuelto en un trigger o función RPC que:
+
+1. Capture el estado actual del registro (snapshot completo).
+2. Calcule el diff respecto de la versión anterior (último snapshot de `registro_versiones`).
+3. Inserte la nueva versión en `registro_versiones`.
+4. Ejecute la operación solicitada sobre la tabla de la entidad.
+
+La restauración de una versión se implementa como:
+
+1. Obtener el snapshot de la versión a restaurar desde `registro_versiones`.
+2. Escribir ese snapshot en la tabla de la entidad.
+3. Insertar una nueva fila en `registro_versiones` con `operacion = 'restauracion'` y `cambios = { accion: 'restaurado_desde_version_X' }`.
+
+---
+
+### 2. Aguinaldos (SAC) en la sección Sueldos
+
+La sección **Sueldos** debe ampliarse para contemplar también la gestión de **Aguinaldos (SAC)**.
+
+El sistema debe permitir registrar, editar y consultar:
+
+- Sueldos.
+- Bonos.
+- Aguinaldos.
+
+Los aguinaldos deben poder asociarse al período correspondiente (primer o segundo semestre), año, moneda (ARS/USD cuando corresponda) y empleado, manteniendo la misma lógica de edición manual y carga mediante el Asistente IA que el resto de los conceptos salariales.
+
+#### Migración sugerida
+
+```sql
+ALTER TABLE sueldos ADD COLUMN IF NOT EXISTS tipo_concepto text DEFAULT 'sueldo';
+-- Valores posibles: 'sueldo', 'bono', 'aguinaldo'
+
+ALTER TABLE sueldos ADD COLUMN IF NOT EXISTS semestre integer;
+-- 1 = primer semestre, 2 = segundo semestre. Solo aplica cuando tipo_concepto = 'aguinaldo'.
+
+-- Check constraint para asegurar semestre válido en aguinaldos
+ALTER TABLE sueldos ADD CONSTRAINT chk_semestre_aguinaldo
+  CHECK (
+    (tipo_concepto = 'aguinaldo' AND semestre IN (1, 2))
+    OR (tipo_concepto != 'aguinaldo')
+  );
+```
+
+#### Cambios en la UI
+
+El accordion de Sueldos (actualmente ARS / USD / Bonos) debe incorporar una cuarta sección:
+
+| Sección | Contenido |
+|---------|-----------|
+| **Aguinaldos (SAC)** | Tabla: empleado, semestre (1er/2do badge), monto, moneda (ARS/USD badge) + totales ARS/USD |
+
+La tabla de Aguinaldos debe seguir el mismo patrón que la tabla de Bonos Anuales: filas por empleado con aguinaldo registrado, columnas de monto y moneda, y footer con totales por moneda.
+
+---
+
+### 3. Alta manual de Legajos
+
+Actualmente el documento especifica la carga mediante el Asistente IA y la edición de legajos existentes, pero también debe quedar explícitamente establecido que **los legajos pueden crearse manualmente desde la interfaz gráfica**, al igual que ocurre con las demás entidades del sistema.
+
+La sección **Legajo** debe contar con un botón **"Nuevo Legajo"** que permita crear un empleado completamente desde formularios tradicionales, sin necesidad de utilizar el Asistente IA.
+
+Este comportamiento debe ser consistente con el principio rector del proyecto:
+
+> Todo dato del sistema debe poder cargarse, editarse y eliminarse tanto manualmente desde la interfaz como conversando con el Asistente IA.
+
+La creación manual debe ofrecer exactamente las mismas capacidades y validaciones que la creación conversacional mediante IA.
+
+#### Cambios en la UI
+
+- Agregar botón **"+ Nuevo Legajo"** en el `pageHeaderAction` del listado `/dashboard/legajo`.
+- El botón abre un `<Sheet>` (panel lateral) o `<Dialog>` con un formulario completo que capture todos los campos del empleado (nombre, DNI, fecha de nacimiento, celular, email, dirección, movilidad, equipo, fecha de ingreso, estado, modalidad, contacto de emergencia, puesto).
+- Usar `useAppForm` + `useFormFields` de `@/components/ui/tanstack-form` (convención del proyecto).
+- Al submit exitoso: invalidar `['empleados']`, cerrar el panel, y mostrar toast de éxito con opción de ir al detalle del nuevo empleado.
+- Las mismas validaciones que aplica el Asistente IA deben aplicarse aquí (campos requeridos, formatos de email, DNI numérico, etc.).
+
+#### Query key
+
+```typescript
+// La creación usa:
+queryClient.invalidateQueries({ queryKey: ['empleados'] });
+```
+
+---
+
 ## Notas para la IA que ejecute este roadmap
 
 1. **Leer antes de tocar:** siempre leer el archivo completo antes de editar, nunca asumir contenido.
