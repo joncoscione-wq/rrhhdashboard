@@ -1,17 +1,10 @@
 import { NextResponse } from 'next/server';
-import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/supabase';
 import { extractSheetId } from '@/features/google-sheets/api/service';
 import { suggestSection } from '@/features/google-sheets/lib/section-detector';
 import { importSheetData } from '@/features/google-sheets/lib/import-engine';
+import { parseSpreadsheet, type ParsedTab } from '@/features/google-sheets/lib/parse-spreadsheet';
 import type { SyncResult } from '@/features/google-sheets/api/types';
-
-type ParsedTab = {
-  name: string;
-  index: number;
-  headers: string[];
-  rows: Record<string, string>[];
-};
 
 async function parseXlsxFromGoogle(googleSheetId: string): Promise<ParsedTab[]> {
   const url = `https://docs.google.com/spreadsheets/d/${googleSheetId}/export?format=xlsx`;
@@ -22,62 +15,7 @@ async function parseXlsxFromGoogle(googleSheetId: string): Promise<ParsedTab[]> 
     );
 
   const buffer = await res.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
-
-  return workbook.SheetNames.map((name, index) => {
-    const sheet = workbook.Sheets[name];
-    const ref = sheet['!ref'];
-    if (!ref) return { name, index, headers: [], rows: [] };
-
-    const range = XLSX.utils.decode_range(ref);
-
-    // Extract headers from first row. Los nombres repetidos (ej. dos columnas
-    // "Enero" para años distintos) se desambiguan con un sufijo para que no se
-    // pisen entre sí al armar el objeto de cada fila.
-    const headers: string[] = [];
-    const headerCounts = new Map<string, number>();
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const cell = sheet[XLSX.utils.encode_cell({ r: range.s.r, c })];
-      const val = cell ? String(XLSX.utils.format_cell(cell)).trim() : '';
-      if (!val) continue;
-      const count = headerCounts.get(val) ?? 0;
-      headerCounts.set(val, count + 1);
-      headers.push(count === 0 ? val : `${val} (${count + 1})`);
-    }
-    if (headers.length === 0) return { name, index, headers: [], rows: [] };
-
-    // Extract rows — prefer cell.l.Target (hyperlink URL) over display text
-    const rows: Record<string, string>[] = [];
-    for (let r = range.s.r + 1; r <= range.e.r; r++) {
-      const obj: Record<string, string> = {};
-      let hasValue = false;
-      for (let ci = 0; ci < headers.length; ci++) {
-        const cell = sheet[XLSX.utils.encode_cell({ r, c: range.s.c + ci })];
-        if (!cell) {
-          obj[headers[ci]] = '';
-          continue;
-        }
-        const val =
-          cell.l?.Target ??
-          (cell.t === 'd'
-            ? (cell.v as Date).toLocaleDateString('es-AR')
-            : String(XLSX.utils.format_cell(cell)).trim());
-        obj[headers[ci]] = val;
-        if (val) hasValue = true;
-        // Capture cell notes/comments (Google Sheets Notes export as cell.c in xlsx)
-        if (cell.c && Array.isArray(cell.c) && cell.c.length > 0) {
-          const noteText = (cell.c as Array<{ t?: string }>)
-            .map((c) => c.t ?? '')
-            .join(' ')
-            .trim();
-          if (noteText) obj[`${headers[ci]}__note`] = noteText;
-        }
-      }
-      if (hasValue) rows.push(obj);
-    }
-
-    return { name, index, headers, rows };
-  });
+  return parseSpreadsheet(buffer);
 }
 
 export async function POST(request: Request) {
@@ -161,7 +99,8 @@ export async function POST(request: Request) {
       syncId: sync.id,
       rowCount: tab.rows.length,
       headers: tab.headers,
-      suggestedSection
+      suggestedSection,
+      commentRowsSkipped: tab.commentRowsSkipped
     });
 
     // ── Importar a tabla de negocio ─────────────────────────────────────────
@@ -172,7 +111,8 @@ export async function POST(request: Request) {
           suggestedSection,
           tab.rows,
           tab.headers,
-          tab.name
+          tab.name,
+          tab.headerYearHints
         );
         if (importResult) {
           last.importCreated = importResult.created;

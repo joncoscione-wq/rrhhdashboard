@@ -52,6 +52,7 @@ import {
   IconGripVertical,
   IconHelpCircle,
   IconHierarchy,
+  IconHistory,
   IconInfoCircle,
   IconItalic,
   IconLayoutDashboard,
@@ -238,6 +239,7 @@ export const Icons = {
   // RRHH Modules
   talent: IconUsers,
   hierarchy: IconHierarchy,
+  history: IconHistory,
   documents: IconFileDescription,
   operations: IconCalendarClock,
   attendance: IconClipboardCheck,

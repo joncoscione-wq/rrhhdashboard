@@ -94,6 +94,32 @@ export async function updateMessageAction(
   await supabase.from('ai_messages').update({ pending_action: pendingAction }).eq('id', messageId);
 }
 
+// ── Agent Action Log (registro durable de cambios ejecutados por el agente) ──
+
+export type AiAgentLogEntry = {
+  id: number;
+  session_id: string | null;
+  action_type: 'upsert' | 'update' | 'delete';
+  table_name: string;
+  description: string | null;
+  risk: 'low' | 'medium' | 'high' | null;
+  records_before: Record<string, unknown>[] | null;
+  records_after: Record<string, unknown>[] | null;
+  affected: number;
+  status: 'executed' | 'error';
+  error: string | null;
+  created_at: string;
+};
+
+export async function getAgentLog(limit = 30): Promise<AiAgentLogEntry[]> {
+  const { data } = await supabase
+    .from('ai_agent_log')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  return (data ?? []) as AiAgentLogEntry[];
+}
+
 // ── Context Memory ────────────────────────────────────────────────────────────
 
 export async function getContextMemory(): Promise<AiContextMemory[]> {

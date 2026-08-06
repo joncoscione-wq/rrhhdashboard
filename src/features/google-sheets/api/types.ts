@@ -75,6 +75,8 @@ export type TabSyncResult = {
   importUpdated?: number;
   importSkipped?: number;
   importError?: string;
+  // filas descartadas por ser comentarios/notas fuera de la grilla de datos
+  commentRowsSkipped?: number;
   error?: string;
 };
 

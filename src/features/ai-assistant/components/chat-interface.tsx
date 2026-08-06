@@ -11,16 +11,24 @@ import type { ChatMessage, AssistantMode, ProposedAction } from '../api/types';
 import type { LogEntry } from './action-log';
 import { createSession, saveMessage } from '../api/service';
 
+function toProposedAction(parsed: Record<string, unknown>): ProposedAction | null {
+  if (parsed.type && parsed.table && Array.isArray(parsed.records)) {
+    return { ...parsed, status: 'pending' } as unknown as ProposedAction;
+  }
+  return null;
+}
+
+// Fallback histórico: el modelo imprimía la acción como bloque ```json en el
+// texto. Se mantiene por compatibilidad, pero el camino principal es el
+// tool_call estructurado (function calling de DeepSeek).
 function parseProposedAction(content: string): ProposedAction | null {
   const match = content.match(/```json\s*([\s\S]*?)\s*```/);
   if (!match) return null;
   try {
-    const parsed = JSON.parse(match[1]);
-    if (parsed.type && parsed.table && parsed.records) {
-      return { ...parsed, status: 'pending' };
-    }
-  } catch {}
-  return null;
+    return toProposedAction(JSON.parse(match[1]));
+  } catch {
+    return null;
+  }
 }
 
 function MessageBubble({
@@ -163,6 +171,8 @@ export function ChatInterface({
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let fullContent = '';
+      // Los tool_calls llegan por streaming como deltas parciales (index-based)
+      const toolCallsAcc: Record<number, { name: string; arguments: string }> = {};
 
       while (true) {
         const { done, value } = await reader.read();
@@ -176,12 +186,22 @@ export function ChatInterface({
           if (data === '[DONE]') continue;
           try {
             const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content ?? '';
-            if (delta) {
-              fullContent += delta;
+            const delta = parsed.choices?.[0]?.delta;
+            const content = delta?.content ?? '';
+            if (content) {
+              fullContent += content;
               setMessages((prev) =>
                 prev.map((m) => (m.id === assistantMsgId ? { ...m, content: fullContent } : m))
               );
+            }
+            const toolCalls = delta?.tool_calls;
+            if (Array.isArray(toolCalls)) {
+              for (const tc of toolCalls) {
+                const idx = tc.index ?? 0;
+                if (!toolCallsAcc[idx]) toolCallsAcc[idx] = { name: '', arguments: '' };
+                if (tc.function?.name) toolCallsAcc[idx].name += tc.function.name;
+                if (tc.function?.arguments) toolCallsAcc[idx].arguments += tc.function.arguments;
+              }
             }
           } catch {}
         }
@@ -201,9 +221,28 @@ export function ChatInterface({
         }
       })();
 
-      // Parse proposed action if in build mode
+      // Parse proposed action if in build mode: primero el tool_call
+      // estructurado; si no vino, fallback al bloque ```json del texto.
       if (mode === 'build') {
-        const action = parseProposedAction(fullContent);
+        let action: ProposedAction | null = null;
+        const toolCall = Object.values(toolCallsAcc).find((tc) => tc.name === 'propose_action');
+        if (toolCall) {
+          try {
+            action = toProposedAction(JSON.parse(toolCall.arguments));
+          } catch {
+            action = null;
+          }
+        }
+        if (!action) action = parseProposedAction(fullContent);
+
+        // Si solo vino el tool_call sin texto, mostrar la descripción en la burbuja
+        if (action && !fullContent.trim()) {
+          fullContent = action.description;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === assistantMsgId ? { ...m, content: fullContent } : m))
+          );
+        }
+
         if (action) {
           setMessages((prev) =>
             prev.map((m) => (m.id === assistantMsgId ? { ...m, pendingAction: action } : m))
@@ -237,7 +276,7 @@ export function ChatInterface({
         const res = await fetch('/api/ai/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action })
+          body: JSON.stringify({ action, session_id: sessionIdRef.current ?? undefined })
         });
         const result = await res.json();
 

@@ -241,26 +241,15 @@ export async function buildSystemPrompt(mode: AssistantMode): Promise<string> {
       ? `
 ## MODO BUILD — Podés proponer acciones
 
-En modo build podés proponer acciones concretas usando la herramienta \`propose_action\`.
-Nunca ejecutes nada directamente. Cada acción propuesta se mostrará al usuario para que la confirme antes de ejecutarse.
+En modo build proponés acciones concretas llamando a la **herramienta (function call) \`propose_action\`**. NO escribas el JSON de la acción en el texto de tu respuesta: usá siempre la tool.
+Nunca ejecutes nada directamente. Cada acción propuesta se muestra al usuario para que la confirme antes de ejecutarse, y cada ejecución queda registrada con el estado anterior y posterior de las filas.
 
 Tipos de acciones que podés proponer:
 - \`upsert\`: insertar o actualizar registros en una tabla de negocio
-- \`update\`: modificar campos específicos de registros existentes
-- \`delete\`: marcar registros como inactivos (nunca borrar físicamente)
-- \`mapping\`: proponer un nuevo mapeo de columnas de sheet → tabla de negocio
+- \`update\`: modificar campos específicos de registros existentes (incluí la \`match_column\`, normalmente \`id\`)
+- \`delete\`: marcar registros como inactivos (nunca borrar físicamente empleados)
 
-Formato de propose_action:
-\`\`\`json
-{
-  "type": "upsert" | "update" | "delete" | "mapping",
-  "table": "nombre_tabla",
-  "description": "descripción clara de qué hace esta acción y por qué",
-  "risk": "low" | "medium" | "high",
-  "sql": "SELECT / INSERT / UPDATE ... (si aplica)",
-  "affected_rows_estimate": número
-}
-\`\`\`
+Podés actuar sobre cualquier sección de un legajo: datos personales y de contacto (\`empleados\`), puesto (\`puestos\`), home office (\`home_office_semanal\`), sueldos y bonos (\`sueldos\`), vacaciones (\`vacaciones\`). Cuando el usuario te pida cargar o corregir algo de un legajo, proponé la acción con el \`id\` numérico del empleado de la lista de este contexto.
 
 Reglas de riesgo:
 - low: afecta 1 registro, reversible

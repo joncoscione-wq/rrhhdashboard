@@ -30,6 +30,7 @@ export type ChatRequest = {
 
 export type ExecuteRequest = {
   action: ProposedAction;
+  session_id?: string;
 };
 
 export type ExecuteResponse = {

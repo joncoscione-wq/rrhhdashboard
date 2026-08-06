@@ -1,4 +1,10 @@
 import { supabase } from '@/lib/supabase';
+import {
+  normalize,
+  extractYear,
+  parseMonthYearHeader,
+  parseDateRangeFromNote
+} from './parse-spreadsheet';
 
 // ── types ────────────────────────────────────────────────────────────────────
 
@@ -14,15 +20,6 @@ export type ImportResult = {
 type ColumnMap = Record<string, string[]>;
 
 // ── normalisation ────────────────────────────────────────────────────────────
-
-function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_|_$/g, '');
-}
 
 function tokens(text: string): string[] {
   return normalize(text).split('_').filter(Boolean);
@@ -52,12 +49,14 @@ function detectColumns(headers: string[], columnMap: ColumnMap): Record<string, 
 
 // ── value parsers ────────────────────────────────────────────────────────────
 
+// Soporta "15/07/2024", "13/3/1995" y años de 2 dígitos ("15/9/25" → 2025).
 function parseDate(val: string): string | null {
   if (!val || typeof val !== 'string') return null;
-  const ddmmyyyy = val.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  const ddmmyyyy = val.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
   if (ddmmyyyy) {
     const [, d, m, y] = ddmmyyyy;
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    const year = y.length === 2 ? `20${y}` : y;
+    return `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
   }
   if (/^\d{4}-\d{2}-\d{2}/.test(val)) return val.slice(0, 10);
   return null;
@@ -67,6 +66,15 @@ function parseBool(val: string): boolean | null {
   const clean = val.trim().toLowerCase();
   if (['si', 'sí', 'yes', 'true', 'activo', '1', '✓'].includes(clean)) return true;
   if (['no', 'false', 'inactivo', '0', '✗', 'x', '-'].includes(clean)) return false;
+  return null;
+}
+
+// "PESOS" | "PESOS ARG" → 'PESOS ARG' · "Dólares" | "USD" → 'USD'
+function parseMoneda(raw: string | undefined): 'PESOS ARG' | 'USD' | null {
+  if (!raw) return null;
+  const n = normalize(raw);
+  if (n.includes('usd') || n.includes('dolar')) return 'USD';
+  if (n.includes('peso')) return 'PESOS ARG';
   return null;
 }
 
@@ -146,6 +154,7 @@ const LEGAJO_COLUMNS: ColumnMap = {
   nombre_apellido: [
     'Nombre & Apellido',
     'Nombre y Apellido',
+    'Apellido y Nombre',
     'nombre_apellido',
     'Empleado',
     'Nombre'
@@ -160,8 +169,14 @@ const LEGAJO_COLUMNS: ColumnMap = {
   email: ['Mail Contexto', 'Mail', 'Email', 'Correo', 'email'],
   direccion: ['Dirección', 'Direccion', 'Domicilio', 'direccion'],
   movilidad: ['Movilidad', 'movilidad'],
-  modalidad: ['Modalidad', 'modalidad']
+  modalidad: ['Modalidad', 'modalidad'],
+  puesto: ['Puesto de Trabajo', 'Puesto', 'puesto', 'Cargo']
 };
+
+// Mínimo de campos de legajo mapeados para CREAR un empleado nuevo. Pestañas
+// parciales ("Mails", "Nombre puestos") solo actualizan empleados existentes:
+// crear uno nuevo a partir de 1-2 columnas generaba duplicados basura.
+const LEGAJO_MIN_CAMPOS_INSERT = 3;
 
 const FLOTA_LINEAS_COLUMNS: ColumnMap = {
   numero: ['Numero', 'Número', 'Línea', 'Linea', 'numero', 'Tel', 'Teléfono'],
@@ -182,83 +197,6 @@ const FLOTA_LAPTOPS_COLUMNS: ColumnMap = {
   comentarios: ['Comentarios', 'comentarios', 'Notas', 'Observaciones']
 };
 
-const MESES_MAP: Record<string, number> = {
-  ene: 1,
-  feb: 2,
-  mar: 3,
-  abr: 4,
-  may: 5,
-  jun: 6,
-  jul: 7,
-  ago: 8,
-  sep: 9,
-  oct: 10,
-  nov: 11,
-  dic: 12
-};
-
-const MESES_NOMBRE: Record<string, number> = {
-  enero: 1,
-  febrero: 2,
-  marzo: 3,
-  abril: 4,
-  mayo: 5,
-  junio: 6,
-  julio: 7,
-  agosto: 8,
-  septiembre: 9,
-  octubre: 10,
-  noviembre: 11,
-  diciembre: 12
-};
-
-function pad(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-function toIso(year: number, mes: number, day: number): string {
-  return `${year}-${pad(mes)}-${pad(day)}`;
-}
-
-// Parses Spanish date range text from cell notes, e.g.:
-//   "5 al 14 de junio"
-//   "del 5 al 14 de junio"
-//   "5/6 al 14/6"
-//   "05-06 al 14-06"
-function parseDateRangeFromNote(
-  note: string,
-  year: number
-): { inicio: string; fin: string } | null {
-  const text = note.toLowerCase().trim();
-
-  // "5 al 14 de junio" / "del 5 al 14 de junio"
-  const namedMonth = text.match(
-    /(?:del\s+)?(\d{1,2})\s+al\s+(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/
-  );
-  if (namedMonth) {
-    const startDay = parseInt(namedMonth[1]);
-    const endDay = parseInt(namedMonth[2]);
-    const mes = MESES_NOMBRE[namedMonth[3]];
-    return { inicio: toIso(year, mes, startDay), fin: toIso(year, mes, endDay) };
-  }
-
-  // "5/6 al 14/6" or "5-6 al 14-6" or "05.06 al 14.06"
-  const numericRange = text.match(/(\d{1,2})[/\-.:](\d{1,2})\s+al\s+(\d{1,2})[/\-.:](\d{1,2})/);
-  if (numericRange) {
-    const startDay = parseInt(numericRange[1]);
-    const startMes = parseInt(numericRange[2]);
-    const endDay = parseInt(numericRange[3]);
-    const endMes = parseInt(numericRange[4]);
-    const endYear = endMes < startMes ? year + 1 : year;
-    return {
-      inicio: toIso(year, startMes, startDay),
-      fin: toIso(endYear, endMes, endDay)
-    };
-  }
-
-  return null;
-}
-
 // ── importers ────────────────────────────────────────────────────────────────
 
 async function importLegajo(
@@ -274,6 +212,7 @@ async function importLegajo(
     const mapped: Record<string, unknown> = {};
 
     for (const [dbCol, sheetCol] of Object.entries(colMap)) {
+      if (dbCol === 'puesto') continue; // puesto va a su propia tabla
       const raw = (row[sheetCol] ?? '').trim();
       if (!raw) continue;
 
@@ -287,6 +226,8 @@ async function importLegajo(
         mapped[dbCol] = raw;
       }
     }
+
+    const puestoVal = colMap.puesto ? (row[colMap.puesto] ?? '').trim() : '';
 
     if (!mapped.nombre_apellido && !mapped.dni) {
       skipped++;
@@ -303,28 +244,48 @@ async function importLegajo(
       existing = data;
     }
     if (!existing && mapped.nombre_apellido) {
-      const { data } = await supabase
-        .from('empleados')
-        .select('id')
-        .eq('nombre_apellido', mapped.nombre_apellido as string)
-        .maybeSingle();
-      existing = data;
+      // Resolución tolerante a formato ("Tomas Rozemberg" ≡ "ROZEMBERG, Tomas")
+      const id = await resolveEmpleadoId(mapped.nombre_apellido as string);
+      if (id) existing = { id };
     }
 
+    const cantidadCampos = Object.keys(mapped).length;
+
     if (existing) {
-      const { error } = await supabase.from('empleados').update(mapped).eq('id', existing.id);
-      if (error) {
-        console.error('[import] empleados update:', error.message);
-        skipped++;
-      } else {
-        updated++;
+      if (cantidadCampos > 0) {
+        const { error } = await supabase.from('empleados').update(mapped).eq('id', existing.id);
+        if (error) {
+          console.error('[import] empleados update:', error.message);
+          skipped++;
+          continue;
+        }
       }
+      if (puestoVal) {
+        const { error } = await supabase
+          .from('puestos')
+          .upsert({ empleado_id: existing.id, puesto: puestoVal }, { onConflict: 'empleado_id' });
+        if (error) console.error('[import] puestos upsert:', error.message);
+      }
+      updated++;
     } else {
-      const { error } = await supabase.from('empleados').insert({ ...mapped, empresa_id: 1 });
+      if (cantidadCampos < LEGAJO_MIN_CAMPOS_INSERT) {
+        skipped++;
+        continue;
+      }
+      const { data: inserted, error } = await supabase
+        .from('empleados')
+        .insert({ ...mapped, empresa_id: 1 })
+        .select('id')
+        .single();
       if (error) {
         console.error('[import] empleados insert:', error.message);
         skipped++;
       } else {
+        if (puestoVal && inserted) {
+          await supabase
+            .from('puestos')
+            .upsert({ empleado_id: inserted.id, puesto: puestoVal }, { onConflict: 'empleado_id' });
+        }
         created++;
       }
     }
@@ -336,15 +297,17 @@ async function importLegajo(
 async function importVacaciones(
   rows: Record<string, string>[],
   headers: string[],
-  tabName: string
+  tabName: string,
+  yearHints: Record<string, number> = {}
 ): Promise<Omit<ImportResult, 'tabName'>> {
   let created = 0,
     updated = 0,
     skipped = 0;
 
-  // Detect year from tab name
-  const yearMatch = tabName.match(/\b(20\d{2})\b/);
-  const anio = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
+  // Año de la pestaña solo como último recurso: las grillas viejas mezclan
+  // varios períodos lado a lado y un año único importaba días al año equivocado.
+  const tabYearMatch = tabName.match(/\b(20\d{2})\b/);
+  const tabYear = tabYearMatch ? parseInt(tabYearMatch[1]) : null;
 
   // Detect name column (first non-numeric column)
   const sample = rows.slice(0, 8);
@@ -360,8 +323,31 @@ async function importVacaciones(
   }
   if (!nameCol) return { section: 'Vacaciones', created: 0, updated: 0, skipped: rows.length };
 
-  // Detect month columns
-  const monthCols = headers.filter((h) => MESES_MAP[normalize(h).slice(0, 3)] !== undefined);
+  // Columnas de mes, cada una con SU año (encabezado "Dic 24", fecha 23/11/2024,
+  // o heredado de la fila de grupo mergeada "Periodo 2024 / ...").
+  type MonthCol = { header: string; month: number; year: number | null };
+  const monthCols: MonthCol[] = [];
+  for (const h of headers) {
+    if (h === nameCol) continue;
+    const my = parseMonthYearHeader(h);
+    if (my?.month != null) {
+      monthCols.push({ header: h, month: my.month, year: my.year ?? yearHints[h] ?? tabYear });
+    }
+  }
+
+  // Columnas de saldo: QDIASxx = días correspondientes; última SALDO = saldo
+  // actual del período (la grilla trae varias columnas "Saldo"/"SALDO").
+  const qdiasCol = headers.find((h) => normalize(h).startsWith('qdias'));
+  const saldoCols = headers.filter((h) => /^saldo(_\d+)?$/.test(normalize(h)));
+  const saldoCol = saldoCols[saldoCols.length - 1];
+
+  const distinctYears = [
+    ...new Set(monthCols.map((c) => c.year).filter((y): y is number => y != null))
+  ];
+  const balanceYear =
+    (qdiasCol ? extractYear(qdiasCol) : null) ??
+    tabYear ??
+    (distinctYears.length === 1 ? distinctYears[0] : null);
 
   for (const row of rows) {
     const rawName = (row[nameCol] ?? '').trim();
@@ -376,70 +362,105 @@ async function importVacaciones(
       continue;
     }
 
-    let totalDias = 0;
     let registeredFromNote = false;
 
-    for (const mh of monthCols) {
-      const dias = parseNumber(row[mh] ?? '');
-      if (!dias || dias <= 0) continue;
-      totalDias += dias;
+    for (const mc of monthCols) {
+      // La nota de celda trae el rango exacto ("5/3 - 26/3", "4 al 15"…);
+      // el mes de contexto es el de la propia columna.
+      const noteRaw = row[`${mc.header}__note`] ?? '';
+      if (!noteRaw || mc.year == null) continue;
 
-      // If there's a cell note with a date range, register exact vacation period
-      const noteRaw = row[`${mh}__note`] ?? '';
-      if (noteRaw) {
-        const range = parseDateRangeFromNote(noteRaw, anio);
-        if (range) {
-          // Check for existing record with same start date to avoid duplicates
-          const { data: existingDia } = await supabase
-            .from('vacaciones')
-            .select('id')
-            .eq('empleado_id', empleadoId)
-            .eq('fecha_inicio', range.inicio)
-            .maybeSingle();
+      const range = parseDateRangeFromNote(noteRaw, mc.year, mc.month);
+      if (!range) continue;
 
-          if (!existingDia) {
-            await supabase.rpc('registrar_vacaciones', {
-              p_empleado_id: empleadoId,
-              p_fecha_inicio: range.inicio,
-              p_fecha_fin: range.fin,
-              p_periodo_anio: anio
-            });
-            created++;
-          } else {
-            updated++;
-          }
-          registeredFromNote = true;
-          continue;
-        }
+      // Dedupe real: mismo período de vacaciones ya registrado para ese año
+      const { data: vac } = await supabase
+        .from('vacaciones')
+        .select('id')
+        .eq('empleado_id', empleadoId)
+        .eq('anio', mc.year)
+        .maybeSingle();
+      let yaRegistrado = false;
+      if (vac) {
+        const { data: dia } = await supabase
+          .from('vacaciones_dias')
+          .select('id')
+          .eq('vacaciones_id', vac.id)
+          .eq('fecha_inicio', range.inicio)
+          .maybeSingle();
+        yaRegistrado = !!dia;
       }
+
+      if (!yaRegistrado) {
+        await supabase.rpc('registrar_vacaciones', {
+          p_empleado_id: empleadoId,
+          p_fecha_inicio: range.inicio,
+          p_fecha_fin: range.fin,
+          p_periodo_anio: mc.year
+        });
+        created++;
+      } else {
+        updated++;
+      }
+      registeredFromNote = true;
     }
 
-    // No notes with parseable dates — fall back to updating the balance summary
-    if (!registeredFromNote) {
-      const { data: existing } = await supabase
+    if (registeredFromNote) continue;
+
+    // Sin notas con fecha parseable: actualizar el saldo anual, pero SOLO si el
+    // año es atribuible sin ambigüedad. Una grilla con varios períodos mezclados
+    // se saltea explícitamente (y se cuenta) en vez de importar al año incorrecto.
+    if (balanceYear == null) {
+      skipped++;
+      continue;
+    }
+
+    let totalDias = 0;
+    for (const mc of monthCols) {
+      if (mc.year !== balanceYear) continue;
+      const dias = parseNumber(row[mc.header] ?? '');
+      if (dias && dias > 0) totalDias += dias;
+    }
+
+    const qdias = qdiasCol ? parseNumber(row[qdiasCol] ?? '') : null;
+    const saldoSheet = saldoCol ? parseNumber(row[saldoCol] ?? '') : null;
+    const saldoInicial = qdias ?? 14;
+    const saldoActual = saldoSheet ?? saldoInicial - totalDias;
+
+    const { data: existing } = await supabase
+      .from('vacaciones')
+      .select('id')
+      .eq('empleado_id', empleadoId)
+      .eq('anio', balanceYear)
+      .maybeSingle();
+
+    if (existing) {
+      const { error } = await supabase
         .from('vacaciones')
-        .select('id, saldo_inicial, saldo_actual')
-        .eq('empleado_id', empleadoId)
-        .eq('anio', anio)
-        .maybeSingle();
-
-      const saldoInicial = existing?.saldo_inicial ?? 14;
-      const saldoActual = saldoInicial - totalDias;
-
-      if (existing) {
-        await supabase
-          .from('vacaciones')
-          .update({ saldo_actual: saldoActual, dias_correspondientes: saldoInicial })
-          .eq('id', existing.id);
-        updated++;
-      } else {
-        await supabase.from('vacaciones').insert({
-          empleado_id: empleadoId,
-          anio,
+        .update({
+          saldo_actual: saldoActual,
           saldo_inicial: saldoInicial,
-          dias_correspondientes: saldoInicial,
-          saldo_actual: saldoActual
-        });
+          dias_correspondientes: saldoInicial
+        })
+        .eq('id', existing.id);
+      if (error) {
+        console.error('[import] vacaciones update:', error.message);
+        skipped++;
+      } else {
+        updated++;
+      }
+    } else {
+      const { error } = await supabase.from('vacaciones').insert({
+        empleado_id: empleadoId,
+        anio: balanceYear,
+        saldo_inicial: saldoInicial,
+        dias_correspondientes: saldoInicial,
+        saldo_actual: saldoActual
+      });
+      if (error) {
+        console.error('[import] vacaciones insert:', error.message);
+        skipped++;
+      } else {
         created++;
       }
     }
@@ -565,23 +586,97 @@ async function importLaptops(
   return { section: 'Flota', created, updated, skipped };
 }
 
+// ── sueldos ──────────────────────────────────────────────────────────────────
+
+// Upsert por (empleado, mes, anio, moneda). En update solo toca los campos
+// presentes: un bono no pisa el monto ya cargado y viceversa.
+async function upsertSueldo(opts: {
+  empleadoId: number;
+  mes: number;
+  anio: number;
+  moneda: 'PESOS ARG' | 'USD';
+  monto?: number | null;
+  bono?: number | null;
+}): Promise<'created' | 'updated' | 'skipped'> {
+  const { data: existing } = await supabase
+    .from('sueldos')
+    .select('id')
+    .eq('empleado_id', opts.empleadoId)
+    .eq('mes', opts.mes)
+    .eq('anio', opts.anio)
+    .eq('moneda', opts.moneda)
+    .maybeSingle();
+
+  if (existing) {
+    const patch: Record<string, unknown> = {};
+    if (opts.monto != null) patch.monto = opts.monto;
+    if (opts.bono != null) patch.bono_anual = opts.bono;
+    if (Object.keys(patch).length === 0) return 'skipped';
+    const { error } = await supabase.from('sueldos').update(patch).eq('id', existing.id);
+    if (error) {
+      console.error('[import] sueldos update:', error.message);
+      return 'skipped';
+    }
+    return 'updated';
+  }
+
+  const { error } = await supabase.from('sueldos').insert({
+    empresa_id: 1,
+    empleado_id: opts.empleadoId,
+    mes: opts.mes,
+    anio: opts.anio,
+    moneda: opts.moneda,
+    monto: opts.monto ?? null,
+    bono_anual: opts.bono ?? null
+  });
+  if (error) {
+    console.error('[import] sueldos insert:', error.message);
+    return 'skipped';
+  }
+  return 'created';
+}
+
+function mode(nums: number[]): number | null {
+  if (!nums.length) return null;
+  const freq = new Map<number, number>();
+  for (const n of nums) freq.set(n, (freq.get(n) ?? 0) + 1);
+  let best: number | null = null;
+  let bestCount = 0;
+  for (const [n, count] of freq) {
+    if (count > bestCount) {
+      best = n;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+// El bono se registra en junio (convención de la empresa, ver migración
+// cargar_bonos) del año que se pueda resolver para esa columna.
+const MES_BONO = 6;
+
 async function importSueldos(
   rows: Record<string, string>[],
   headers: string[],
-  tabName: string
+  tabName: string,
+  yearHints: Record<string, number> = {}
 ): Promise<Omit<ImportResult, 'tabName'>> {
   let created = 0,
     updated = 0,
     skipped = 0;
 
-  // Detect currency from tab name
   const normalizedTab = normalize(tabName);
-  const moneda = normalizedTab.includes('usd') ? 'USD' : 'PESOS ARG';
+  const tabMoneda = normalizedTab.includes('usd') ? ('USD' as const) : ('PESOS ARG' as const);
+  const tabYearMatch = tabName.match(/\b(20\d{2})\b/);
+  const tabYear = tabYearMatch ? parseInt(tabYearMatch[1]) : null;
 
-  // Try pivot format: employee column + month columns
+  const monedaCol = headers.find((h) => normalize(h) === 'moneda');
+
+  // Columna de nombres (primera mayormente texto)
   const sample = rows.slice(0, 8);
   let nameCol: string | null = null;
   for (const h of headers) {
+    if (h === monedaCol) continue;
     const vals = sample.map((r) => r[h] ?? '').filter(Boolean);
     if (vals.length === 0) continue;
     const nonNumeric = vals.filter((v) => isNaN(Number(v.replace(/[.,\s]/g, ''))));
@@ -591,129 +686,134 @@ async function importSueldos(
     }
   }
 
-  // Detect month columns (numeric headers that could be months)
-  const yearMatch = tabName.match(/\b(20\d{2})\b/);
-  const anio = yearMatch ? parseInt(yearMatch[1]) : new Date().getFullYear();
-
-  const monthCols: { header: string; month: number }[] = [];
+  // Columnas de mes y de bono, cada una con su año. La grilla "Pesos Arg"/"USD"
+  // trae el año en cada encabezado ("ene-23"); la grilla "Sueldos ... 20" no
+  // trae año en los meses y hay que resolverlo por contexto.
+  type SueldoCol = { header: string; month: number | null; year: number | null; isBonus: boolean };
+  const cols: SueldoCol[] = [];
   for (const h of headers) {
-    if (h === nameCol) continue;
-    const m = MESES_MAP[normalize(h).slice(0, 3)];
-    if (m !== undefined) monthCols.push({ header: h, month: m });
+    if (h === nameCol || h === monedaCol) continue;
+    const isBonus = /bono|bonus|aguinaldo/.test(normalize(h));
+    const my = parseMonthYearHeader(h);
+    if (my?.month != null || isBonus) {
+      cols.push({
+        header: h,
+        month: my?.month ?? null,
+        year: my?.year ?? yearHints[h] ?? null,
+        isBonus
+      });
+    }
   }
 
-  if (!nameCol || monthCols.length === 0) {
-    // Try flat format: column-based (empleado, mes, monto)
-    const colMap = detectColumns(headers, {
-      nombre: ['Nombre', 'Empleado', 'nombre_apellido'],
-      mes: ['Mes', 'mes', 'Periodo'],
-      anio: ['Año', 'Anio', 'anio', 'Año'],
-      monto: ['Monto', 'monto', 'Sueldo', 'Neto', 'Salario', 'Total']
-    });
+  const explicitYears = cols.map((c) => c.year).filter((y): y is number => y != null);
+  const fallbackYear = mode(explicitYears) ?? tabYear ?? mode(Object.values(yearHints));
 
+  // Resolución de año por columna, en orden de izquierda a derecha:
+  // propio → fila de grupo → columna anterior (+1 si el mes "da la vuelta" de
+  // diciembre a enero, ej. una columna "Enero" extra al final) → fallback.
+  let lastYear: number | null = null;
+  let lastMonth: number | null = null;
+  const resolved = cols.map((c) => {
+    let year = c.year;
+    if (year == null && lastYear != null) {
+      year = c.month != null && lastMonth != null && c.month <= lastMonth ? lastYear + 1 : lastYear;
+    }
+    if (year == null) year = fallbackYear;
+    if (year != null) {
+      lastYear = year;
+      if (c.month != null) lastMonth = c.month;
+    }
+    return { ...c, year };
+  });
+
+  const monthCols = resolved.filter((c) => !c.isBonus && c.month != null);
+  const bonusCols = resolved.filter((c) => c.isBonus);
+
+  const track = (r: 'created' | 'updated' | 'skipped') => {
+    if (r === 'created') created++;
+    else if (r === 'updated') updated++;
+    else skipped++;
+  };
+
+  // ── Formato pivote: filas empleado × columnas mes ──────────────────────────
+  if (nameCol && monthCols.length > 0) {
     for (const row of rows) {
-      const empName = (colMap.nombre ? row[colMap.nombre] : '')?.trim();
+      const empName = (row[nameCol] ?? '').trim();
       if (!empName) {
         skipped++;
         continue;
       }
-
       const empleadoId = await resolveEmpleadoId(empName);
       if (!empleadoId) {
         skipped++;
         continue;
       }
+      // La moneda puede venir por fila (columna "Moneda") o por pestaña ("USD")
+      const moneda = (monedaCol ? parseMoneda(row[monedaCol]) : null) ?? tabMoneda;
 
-      let mes = colMap.mes ? parseInt(row[colMap.mes] ?? '') : 0;
-      let rowAnio = colMap.anio ? parseInt(row[colMap.anio] ?? '') : anio;
-      const monto = colMap.monto ? parseNumber(row[colMap.monto] ?? '') : null;
-
-      if (!monto || isNaN(mes) || isNaN(rowAnio)) {
-        skipped++;
-        continue;
+      for (const c of monthCols) {
+        if (c.year == null || c.month == null) continue;
+        const monto = parseNumber(row[c.header] ?? '');
+        if (!monto) continue;
+        track(await upsertSueldo({ empleadoId, mes: c.month, anio: c.year, moneda, monto }));
       }
-
-      const { data: existing } = await supabase
-        .from('sueldos')
-        .select('id')
-        .eq('empleado_id', empleadoId)
-        .eq('mes', mes)
-        .eq('anio', rowAnio)
-        .eq('moneda', moneda)
-        .maybeSingle();
-
-      if (existing) {
-        const { error } = await supabase.from('sueldos').update({ monto }).eq('id', existing.id);
-        if (error) {
-          console.error('[import] sueldos update:', error.message);
-          skipped++;
-        } else {
-          updated++;
-        }
-      } else {
-        const { error } = await supabase
-          .from('sueldos')
-          .insert({ empresa_id: 1, empleado_id: empleadoId, mes, anio: rowAnio, moneda, monto });
-        if (error) {
-          console.error('[import] sueldos insert:', error.message);
-          skipped++;
-        } else {
-          created++;
-        }
+      for (const b of bonusCols) {
+        const year = b.year ?? fallbackYear;
+        if (year == null) continue;
+        const bono = parseNumber(row[b.header] ?? '');
+        if (bono == null || bono <= 0) continue; // 0 = sin bono, nada que escribir
+        track(await upsertSueldo({ empleadoId, mes: MES_BONO, anio: year, moneda, bono }));
       }
     }
     return { section: 'Sueldos', created, updated, skipped };
   }
 
-  // Pivot format: employee rows × month columns
+  // ── Formato plano: columnas empleado/mes/año/monto ─────────────────────────
+  // Incluye pestañas dedicadas a bonos ("Bonos Junio 2025": Nombre/Moneda/Monto,
+  // sin columna de mes — el año sale del nombre de la pestaña).
+  const isBonoTab = /bono/.test(normalizedTab);
+  const colMap = detectColumns(headers, {
+    nombre: ['Nombre', 'Empleado', 'nombre_apellido', 'Apellido y Nombre'],
+    mes: ['Mes', 'mes', 'Periodo'],
+    anio: ['Año', 'Anio', 'anio'],
+    monto: ['Monto', 'monto', 'Sueldo', 'Neto', 'Salario', 'Total', 'Importe']
+  });
+
   for (const row of rows) {
-    const empName = (row[nameCol] ?? '').trim();
+    const empName = (colMap.nombre ? row[colMap.nombre] : '')?.trim();
     if (!empName) {
       skipped++;
       continue;
     }
-
     const empleadoId = await resolveEmpleadoId(empName);
     if (!empleadoId) {
       skipped++;
       continue;
     }
+    const moneda = (monedaCol ? parseMoneda(row[monedaCol]) : null) ?? tabMoneda;
 
-    for (const { header, month } of monthCols) {
-      const monto = parseNumber(row[header] ?? '');
-      if (!monto) continue;
-
-      const { data: existing } = await supabase
-        .from('sueldos')
-        .select('id')
-        .eq('empleado_id', empleadoId)
-        .eq('mes', month)
-        .eq('anio', anio)
-        .eq('moneda', moneda)
-        .maybeSingle();
-
-      if (existing) {
-        const { error } = await supabase.from('sueldos').update({ monto }).eq('id', existing.id);
-        if (error) {
-          console.error('[import] sueldos update:', error.message);
-          skipped++;
-        } else {
-          updated++;
-        }
-      } else {
-        const { error } = await supabase
-          .from('sueldos')
-          .insert({ empresa_id: 1, empleado_id: empleadoId, mes: month, anio, moneda, monto });
-        if (error) {
-          console.error('[import] sueldos insert:', error.message);
-          skipped++;
-        } else {
-          created++;
-        }
+    if (isBonoTab) {
+      if (tabYear == null) {
+        skipped++;
+        continue;
       }
+      const bono = colMap.monto ? parseNumber(row[colMap.monto] ?? '') : null;
+      if (bono == null || bono <= 0) continue;
+      track(await upsertSueldo({ empleadoId, mes: MES_BONO, anio: tabYear, moneda, bono }));
+      continue;
     }
-  }
 
+    const mes = colMap.mes ? parseInt(row[colMap.mes] ?? '') : NaN;
+    const rowAnio = colMap.anio ? parseInt(row[colMap.anio] ?? '') : (tabYear ?? NaN);
+    const monto = colMap.monto ? parseNumber(row[colMap.monto] ?? '') : null;
+
+    if (!monto || isNaN(mes) || mes < 1 || mes > 12 || isNaN(rowAnio)) {
+      skipped++;
+      continue;
+    }
+
+    track(await upsertSueldo({ empleadoId, mes, anio: rowAnio, moneda, monto }));
+  }
   return { section: 'Sueldos', created, updated, skipped };
 }
 
@@ -723,7 +823,8 @@ export async function importSheetData(
   section: string | null,
   rows: Record<string, string>[],
   headers: string[],
-  tabName: string
+  tabName: string,
+  yearHints: Record<string, number> = {}
 ): Promise<ImportResult | null> {
   if (!section || rows.length === 0) return null;
 
@@ -734,10 +835,10 @@ export async function importSheetData(
       result = await importLegajo(rows, headers);
       break;
     case 'Vacaciones':
-      result = await importVacaciones(rows, headers, tabName);
+      result = await importVacaciones(rows, headers, tabName, yearHints);
       break;
     case 'Sueldos':
-      result = await importSueldos(rows, headers, tabName);
+      result = await importSueldos(rows, headers, tabName, yearHints);
       break;
     case 'Flota':
       // Laptops primero: "Numero de serie" también matchea el patrón "Numero"

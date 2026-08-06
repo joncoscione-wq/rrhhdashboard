@@ -184,3 +184,17 @@ export async function updateHomeOffice(id: number, modalidad: 'Presencial' | 'Re
   const { error } = await supabase.from('home_office_semanal').update({ modalidad }).eq('id', id);
   if (error) throw new Error(error.message);
 }
+
+// Archivar = baja lógica (activo=false): el legajo se conserva y se puede
+// restaurar. Es la acción por defecto para dar de baja personal.
+export async function setEmpleadoActivo(id: number, activo: boolean) {
+  const { error } = await supabase.from('empleados').update({ activo }).eq('id', id);
+  if (error) throw new Error(error.message);
+}
+
+// Eliminar = borrado físico. Las FK de sueldos/vacaciones/líneas son ON DELETE
+// CASCADE: se pierde todo el historial del legajo. Solo con confirmación.
+export async function deleteEmpleado(id: number) {
+  const { error } = await supabase.from('empleados').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+}

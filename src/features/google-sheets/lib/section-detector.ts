@@ -121,10 +121,17 @@ function normalize(text: string): string {
     .replace(/^_|_$/g, '');
 }
 
+import { parseMonthYearHeader } from './parse-spreadsheet';
+
 function matchesKeyword(normalizedHeader: string, keyword: string): boolean {
   const headerTokens = normalizedHeader.split('_').filter(Boolean);
   const keywordTokens = keyword.split('_').filter(Boolean);
-  return keywordTokens.every((kt) => headerTokens.some((ht) => ht.includes(kt)));
+  // Keywords de 1-2 letras (los días Lu/Ma/Mi/Ju/Vi de Asistencia) exigen token
+  // exacto: con includes() "marzo" matcheaba "ma" y una grilla de sueldos se
+  // clasificaba como Asistencia (y no importaba nada).
+  return keywordTokens.every((kt) =>
+    headerTokens.some((ht) => (kt.length <= 2 ? ht === kt : ht.includes(kt)))
+  );
 }
 
 // Minimum header-keyword matches required to classify (prevents false positives
@@ -140,6 +147,20 @@ export function suggestSection(headers: string[], tabName?: string): string | nu
     for (const [section, keywords] of SECTION_KEYWORDS) {
       const tabScore = keywords.filter((kw) => matchesKeyword(normalizedTab, kw)).length;
       if (tabScore >= 2) return section;
+    }
+  }
+
+  // Grilla pivote persona × meses (ej. "Pesos Arg", "USD", "Sueldos ... 20"):
+  // las keywords de negocio no la detectan porque sus columnas son meses. Si hay
+  // ≥4 columnas-mes y una columna de nombre, es Sueldos (o Vacaciones por nombre).
+  const monthLike = headers.filter((h) => parseMonthYearHeader(h)?.month != null).length;
+  if (monthLike >= 4) {
+    const hasName = normalized.some(
+      (h) => matchesKeyword(h, 'nombre') || matchesKeyword(h, 'empleado')
+    );
+    if (hasName) {
+      if (tabName && normalize(tabName).includes('vacacion')) return 'Vacaciones';
+      return 'Sueldos';
     }
   }
 

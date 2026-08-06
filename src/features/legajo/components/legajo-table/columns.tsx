@@ -7,6 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Icons } from '@/components/icons';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
 import type { Empleado } from '@/features/legajo/api/types';
 import { parseContactoEmergencia } from '@/features/legajo/api/service';
 
@@ -21,6 +28,8 @@ type TableMeta = {
   saveEdit: () => Promise<void>;
   cancelEdit: () => void;
   updateEditData: (key: string, value: unknown) => void;
+  archiveEmpleado: (emp: Empleado) => void;
+  requestDeleteEmpleado: (emp: Empleado) => void;
 };
 
 function getMeta(table: Table<Empleado>): TableMeta {
@@ -385,13 +394,45 @@ export const columns: ColumnDef<Empleado>[] = [
         );
       }
       return (
-        <Button
-          variant='ghost'
-          className='h-8 w-8 p-0'
-          onClick={() => meta.startEdit(row.original.id)}
-        >
-          <Icons.edit className='h-4 w-4' />
-        </Button>
+        <div className='flex items-center gap-1'>
+          <Button
+            variant='ghost'
+            className='h-8 w-8 p-0'
+            onClick={() => meta.startEdit(row.original.id)}
+          >
+            <Icons.edit className='h-4 w-4' />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant='ghost' className='h-8 w-8 p-0'>
+                <Icons.ellipsis className='h-4 w-4' />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='end'>
+              <DropdownMenuItem onClick={() => meta.archiveEmpleado(row.original)}>
+                {row.original.activo ? (
+                  <>
+                    <Icons.employee className='mr-2 h-4 w-4' />
+                    Archivar
+                  </>
+                ) : (
+                  <>
+                    <Icons.refresh className='mr-2 h-4 w-4' />
+                    Restaurar
+                  </>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className='text-destructive focus:text-destructive'
+                onClick={() => meta.requestDeleteEmpleado(row.original)}
+              >
+                <Icons.trash className='mr-2 h-4 w-4' />
+                Eliminar definitivamente
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       );
     }
   }

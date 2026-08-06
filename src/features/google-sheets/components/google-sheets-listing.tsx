@@ -65,7 +65,12 @@ function reportImportIssues(results: SyncResult[]) {
         toast.warning(`"${t.tabName}": falló el import a la tabla de negocio — ${t.importError}`);
       } else if (t.importSkipped) {
         toast.warning(
-          `"${t.tabName}": se salteó${t.importSkipped > 1 ? 'n' : ''} ${t.importSkipped} fila${t.importSkipped > 1 ? 's' : ''} por datos faltantes (revisar nombre/DNI)`
+          `"${t.tabName}": se salteó${t.importSkipped > 1 ? 'n' : ''} ${t.importSkipped} fila${t.importSkipped > 1 ? 's' : ''} por datos faltantes o año no identificable (revisar pestaña)`
+        );
+      }
+      if (t.commentRowsSkipped) {
+        toast.info(
+          `"${t.tabName}": se ignoró${t.commentRowsSkipped > 1 ? 'ron' : ''} ${t.commentRowsSkipped} fila${t.commentRowsSkipped > 1 ? 's' : ''} de comentarios/notas fuera de la grilla`
         );
       }
     }
