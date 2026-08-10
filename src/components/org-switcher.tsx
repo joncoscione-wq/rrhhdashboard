@@ -20,9 +20,11 @@ export function OrgSwitcher() {
             alt='PetraLabs'
             width={630}
             height={155}
-            className={`h-[155px] w-auto max-w-full transition-all duration-200 ease-in-out ${
-              state === 'collapsed' ? 'size-8 shrink-0 rounded-lg' : ''
-            }`}
+            className={
+              state === 'collapsed'
+                ? 'size-8 shrink-0 rounded-lg object-contain transition-all duration-200 ease-in-out'
+                : 'h-[155px] w-auto max-w-full object-contain transition-all duration-200 ease-in-out'
+            }
           />
         </SidebarMenuButton>
       </SidebarMenuItem>
