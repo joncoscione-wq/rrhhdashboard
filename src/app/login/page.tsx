@@ -25,8 +25,15 @@ export default function LoginPage() {
         router.replace('/dashboard/overview');
         return;
       }
-      const data = (await res.json()) as { error?: string };
-      setError(data.error ?? 'Error al iniciar sesión');
+      // Solo los 4xx traen un mensaje pensado para el usuario (PIN incorrecto,
+      // demasiados intentos). Un 5xx es una falla interna: mostrar su `error`
+      // le escupía cosas como "TypeError: fetch failed" al usuario.
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(
+        res.status < 500
+          ? (data.error ?? 'Error al iniciar sesión')
+          : 'El servidor no está disponible. Probá de nuevo en unos minutos.'
+      );
       setPin('');
     } catch {
       setError('No se pudo conectar con el servidor');

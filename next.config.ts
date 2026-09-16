@@ -23,7 +23,10 @@ const nextConfig: NextConfig = {
   },
   transpilePackages: ['geist'],
   compiler: {
-    removeConsole: process.env.NODE_ENV === 'production'
+    // `error` y `warn` se conservan: son los logs de diagnostico del servidor
+    // (cron /api/ping, login). Con removeConsole a secas se borraban en el
+    // build de produccion y las fallas quedaban invisibles en Vercel.
+    removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error', 'warn'] } : false
   }
 };
 

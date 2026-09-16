@@ -9,9 +9,21 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'PIN de 6 dígitos requerido' }, { status: 400 });
   }
 
-  const { data, error } = await supabase.rpc('verify_pin', { pin });
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  let data: unknown;
+  try {
+    // Si el proyecto de Supabase está pausado, supabase-js tira un TypeError
+    // en vez de devolverlo en `error`. Sin este catch la ruta reventaba y el
+    // login mostraba "TypeError: fetch failed" en pantalla.
+    const res = await supabase.rpc('verify_pin', { pin });
+    if (res.error) {
+      console.error('[login] verify_pin falló:', res.error.message);
+      return NextResponse.json({ error: 'Error al verificar el PIN' }, { status: 500 });
+    }
+    data = res.data;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[login] supabase inalcanzable:', message);
+    return NextResponse.json({ error: 'Base de datos no disponible' }, { status: 503 });
   }
 
   const result = data as {
